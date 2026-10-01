@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:17.11
+    environment:
+      POSTGRES_DB: employee_lifecycle_sync
+      POSTGRES_USER: employee_sync
+      POSTGRES_PASSWORD: employee_sync_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - employee-lifecycle-sync-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U employee_sync -d employee_lifecycle_sync"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  employee-lifecycle-sync-postgres:
