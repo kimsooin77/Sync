@@ -1,0 +1,76 @@
+# 프로젝트 로컬 리소스는 기본적으로 공유하지 않는다.
+.agents/*
+
+# 아래 예외 경로를 검사할 수 있도록 skills 디렉터리만 다시 연다.
+!.agents/skills/
+
+# skills 하위의 모든 항목은 다시 ignore한다.
+.agents/skills/*
+
+# Local Aider skill installation.
+/.aider-desk/
+
+# Git으로 공유하는 공통 adapter만 예외로 둔다.
+!.agents/skills/commit/
+!.agents/skills/commit/**
+!.agents/skills/release/
+!.agents/skills/release/**
+!.agents/skills/stop/
+!.agents/skills/stop/**
+
+
+.playwright-cli/
+skills-lock.json
+tests/
+project-graph/
+.nvmrc
+aml/admin/node_modules
+datahub/admin/node_modules
+.scratch
+
+# OS 생성 파일
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor 로컬 설정
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# 루트 임시/로그
+*.log
+tmp/
+.tmp/
+.cache/
+.eslintcache
+
+# 루트 로컬 환경 파일 (secrets)
+.env
+.env.local
+.env.*.local
+
+# 루트에 실수로 남는 DB dump / 조회 결과 / 데이터 export 방지.
+# 정상적인 SQL·데이터 파일은 반드시 각 프로젝트의 sql/ 또는 .migration/<system>/<version>/<target-db>/ 하위에 둔다.
+# 개인정보나 실 거래 데이터가 실수로 커밋되지 않도록 루트 확장자를 넓게 차단한다.
+/*.sql
+/*.csv
+/*.tsv
+/*.xlsx
+/*.xls
+/*.dump
+/*.dmp
+/*.bak
+/*.zip
+/*.tar
+/*.tar.gz
+/*.tgz
+# Java / Gradle / IDE build output
+/bin/
+.gradle/
+build/
+out/
+*.class
