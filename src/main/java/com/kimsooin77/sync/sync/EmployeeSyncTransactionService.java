@@ -2,6 +2,10 @@ package com.kimsooin77.sync.sync;
 
 import com.kimsooin77.sync.employee.Employee;
 import com.kimsooin77.sync.employee.EmployeeRepository;
+import com.kimsooin77.sync.audit.AuditLogFactory;
+import com.kimsooin77.sync.audit.AuditLogRepository;
+import com.kimsooin77.sync.integration.IntegrationTaskFactory;
+import com.kimsooin77.sync.integration.IntegrationTaskRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,17 +20,31 @@ public class EmployeeSyncTransactionService {
     private final SyncJobRepository syncJobRepository;
     private final SyncItemRepository syncItemRepository;
     private final EmployeeComparator employeeComparator;
+    private final AuditLogRepository auditLogRepository;
+    private final AuditLogFactory auditLogFactory;
+    private final IntegrationTaskRepository integrationTaskRepository;
+    private final IntegrationTaskFactory integrationTaskFactory;
 
     public EmployeeSyncTransactionService(
             EmployeeRepository employeeRepository,
             SyncJobRepository syncJobRepository,
             SyncItemRepository syncItemRepository,
-            EmployeeComparator employeeComparator
+            EmployeeComparator employeeComparator,
+            AuditLogRepository auditLogRepository,
+            AuditLogFactory auditLogFactory,
+            IntegrationTaskRepository integrationTaskRepository,
+            IntegrationTaskFactory integrationTaskFactory
     ) {
         this.employeeRepository = Objects.requireNonNull(employeeRepository, "employeeRepository");
         this.syncJobRepository = Objects.requireNonNull(syncJobRepository, "syncJobRepository");
         this.syncItemRepository = Objects.requireNonNull(syncItemRepository, "syncItemRepository");
         this.employeeComparator = Objects.requireNonNull(employeeComparator, "employeeComparator");
+        this.auditLogRepository = Objects.requireNonNull(auditLogRepository, "auditLogRepository");
+        this.auditLogFactory = Objects.requireNonNull(auditLogFactory, "auditLogFactory");
+        this.integrationTaskRepository = Objects.requireNonNull(
+                integrationTaskRepository, "integrationTaskRepository");
+        this.integrationTaskFactory = Objects.requireNonNull(
+                integrationTaskFactory, "integrationTaskFactory");
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -39,7 +57,10 @@ public class EmployeeSyncTransactionService {
             Employee inserted = employeeRepository.saveAndFlush(new Employee(
                     incoming.employeeNo(), incoming.name(), incoming.email(), incoming.departmentCode(),
                     incoming.employmentStatus()));
-            syncItemRepository.saveAndFlush(SyncItem.inserted(job, rowNumber, inserted));
+            SyncItem item = syncItemRepository.saveAndFlush(SyncItem.inserted(job, rowNumber, inserted));
+            auditLogRepository.saveAndFlush(auditLogFactory.created(inserted, item));
+            integrationTaskFactory.forInserted(inserted, item)
+                    .ifPresent(integrationTaskRepository::saveAndFlush);
             return SyncItemResult.INSERTED;
         }
 
@@ -52,7 +73,9 @@ public class EmployeeSyncTransactionService {
         employee.updateSnapshot(
                 incoming.name(), incoming.email(), incoming.departmentCode(), incoming.employmentStatus());
         employeeRepository.flush();
-        syncItemRepository.saveAndFlush(SyncItem.updated(job, rowNumber, employee));
+        SyncItem item = syncItemRepository.saveAndFlush(SyncItem.updated(job, rowNumber, employee));
+        auditLogRepository.saveAndFlush(auditLogFactory.updated(employee, item, changeSet));
+        integrationTaskRepository.saveAndFlush(integrationTaskFactory.forUpdated(employee, item, changeSet));
         return SyncItemResult.UPDATED;
     }
 

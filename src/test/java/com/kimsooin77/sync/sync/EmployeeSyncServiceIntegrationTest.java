@@ -4,6 +4,13 @@ import com.kimsooin77.sync.employee.Employee;
 import com.kimsooin77.sync.employee.EmployeeRepository;
 import com.kimsooin77.sync.employee.EmploymentStatus;
 import com.kimsooin77.sync.employee.PostgreSqlTestConfiguration;
+import com.kimsooin77.sync.audit.AuditAction;
+import com.kimsooin77.sync.audit.AuditLog;
+import com.kimsooin77.sync.audit.AuditLogRepository;
+import com.kimsooin77.sync.integration.IntegrationAction;
+import com.kimsooin77.sync.integration.IntegrationTask;
+import com.kimsooin77.sync.integration.IntegrationTaskRepository;
+import com.kimsooin77.sync.integration.IntegrationTaskStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,11 +42,19 @@ class EmployeeSyncServiceIntegrationTest {
     private SyncItemRepository syncItemRepository;
 
     @Autowired
+    private AuditLogRepository auditLogRepository;
+
+    @Autowired
+    private IntegrationTaskRepository integrationTaskRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void clearDatabase() {
-        dropSyncItemInsertTrigger();
+        dropTestTriggers();
+        integrationTaskRepository.deleteAllInBatch();
+        auditLogRepository.deleteAllInBatch();
         syncItemRepository.deleteAllInBatch();
         syncJobRepository.deleteAllInBatch();
         employeeRepository.deleteAllInBatch();
@@ -47,7 +62,9 @@ class EmployeeSyncServiceIntegrationTest {
 
     @AfterEach
     void cleanDatabase() {
-        dropSyncItemInsertTrigger();
+        dropTestTriggers();
+        integrationTaskRepository.deleteAllInBatch();
+        auditLogRepository.deleteAllInBatch();
         syncItemRepository.deleteAllInBatch();
         syncJobRepository.deleteAllInBatch();
         employeeRepository.deleteAllInBatch();
@@ -74,6 +91,17 @@ class EmployeeSyncServiceIntegrationTest {
         assertThat(saved.getEmploymentStatus()).isEqualTo(EmploymentStatus.ACTIVE);
         assertThat(syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(firstRun.id()).getFirst()
                 .getEmployeeId()).isEqualTo(saved.getId());
+        AuditLog createdAudit = auditLogRepository.findAllByEmployee_IdOrderByIdAsc(saved.getId()).getFirst();
+        assertThat(createdAudit.getAction()).isEqualTo(AuditAction.CREATED);
+        assertThat(createdAudit.getChanges())
+                .contains("\"employeeNo\":\"E-1001\"")
+                .contains("\"departmentCode\":\"EnG\"");
+        IntegrationTask createdTask = integrationTaskRepository
+                .findAllByEmployee_IdOrderByIdAsc(saved.getId()).getFirst();
+        assertThat(createdTask.getAction()).isEqualTo(IntegrationAction.CREATE_ACCOUNT);
+        assertThat(createdTask.getStatus()).isEqualTo(IntegrationTaskStatus.PENDING);
+        assertThat(createdTask.getIdempotencyKey()).isNotNull();
+        assertThat(createdTask.getPayload()).contains("\"name\":\"Alice\"");
 
         SyncJobResult secondRun = employeeSyncService.synchronize(List.of(
                 hr("E-1001", "Alice", "alice@example.com", "EnG", "ACTIVE")));
@@ -85,6 +113,8 @@ class EmployeeSyncServiceIntegrationTest {
         assertThat(syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(secondRun.id()).getFirst()
                 .getEmployeeId()).isEqualTo(saved.getId());
         assertThat(employeeRepository.count()).isEqualTo(1);
+        assertThat(auditLogRepository.count()).isEqualTo(1);
+        assertThat(integrationTaskRepository.count()).isEqualTo(1);
     }
 
     @Test
@@ -103,6 +133,13 @@ class EmployeeSyncServiceIntegrationTest {
         assertItem(emailCleared.id(), 1, SyncItemResult.UPDATED);
         assertThat(syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(emailCleared.id()).getFirst()
                 .getEmployeeId()).isEqualTo(afterEmailChange.getId());
+        AuditLog emailAudit = auditLogRepository.findAllBySyncItem_Id(
+                syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(emailCleared.id()).getFirst().getId())
+                .getFirst();
+        assertThat(emailAudit.getAction()).isEqualTo(AuditAction.UPDATED);
+        assertThat(emailAudit.getChanges())
+                .contains("\"email\":{\"before\":\"old@example.com\",\"after\":null}")
+                .doesNotContain("\"name\"");
 
         SyncJobResult departmentAndStatusChanged = employeeSyncService.synchronize(List.of(
                 hr("E-2001", "New name", null, null, "ON_LEAVE")));
@@ -114,12 +151,101 @@ class EmployeeSyncServiceIntegrationTest {
         assertThat(updated.getDepartmentCode()).isNull();
         assertThat(updated.getEmploymentStatus()).isEqualTo(EmploymentStatus.ON_LEAVE);
         assertItem(departmentAndStatusChanged.id(), 1, SyncItemResult.UPDATED);
+        IntegrationTask updateTask = integrationTaskRepository.findAllBySyncItem_Id(
+                syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(departmentAndStatusChanged.id())
+                        .getFirst().getId()).getFirst();
+        assertThat(updateTask.getAction()).isEqualTo(IntegrationAction.UPDATE_ACCOUNT);
+        assertThat(updateTask.getPayload())
+                .contains("\"name\":\"New name\"")
+                .contains("\"employmentStatus\":\"ON_LEAVE\"");
 
         SyncJobResult unchanged = employeeSyncService.synchronize(List.of(
                 hr("E-2001", "New name", "", "", "on_leave")));
 
         assertThat(unchanged.skippedCount()).isEqualTo(1);
         assertItem(unchanged.id(), 1, SyncItemResult.SKIPPED);
+        assertThat(auditLogRepository.count()).isEqualTo(2);
+        assertThat(integrationTaskRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void createsTaskForNewOnLeaveEmployeeButNotForNewTerminatedEmployee() {
+        SyncJobResult onLeaveResult = employeeSyncService.synchronize(List.of(
+                hr("E-2501", "On leave", null, null, "ON_LEAVE")));
+        SyncJobResult terminatedResult = employeeSyncService.synchronize(List.of(
+                hr("E-2502", "Terminated", null, null, "TERMINATED")));
+
+        Employee onLeave = employeeRepository.findByEmployeeNo("E-2501").orElseThrow();
+        Employee terminated = employeeRepository.findByEmployeeNo("E-2502").orElseThrow();
+        assertThat(onLeaveResult.insertedCount()).isEqualTo(1);
+        assertThat(terminatedResult.insertedCount()).isEqualTo(1);
+        assertThat(auditLogRepository.findAllByEmployee_IdOrderByIdAsc(onLeave.getId()))
+                .singleElement().extracting(AuditLog::getAction).isEqualTo(AuditAction.CREATED);
+        assertThat(auditLogRepository.findAllByEmployee_IdOrderByIdAsc(terminated.getId()))
+                .singleElement().extracting(AuditLog::getAction).isEqualTo(AuditAction.CREATED);
+        assertThat(integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(onLeave.getId()))
+                .singleElement().extracting(IntegrationTask::getAction)
+                .isEqualTo(IntegrationAction.CREATE_ACCOUNT);
+        assertThat(integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(terminated.getId())).isEmpty();
+    }
+
+    @Test
+    void terminationCreatesDisableTaskAndEarlierTaskPayloadKeepsItsSnapshot() {
+        Employee employee = employeeRepository.saveAndFlush(new Employee(
+                "E-2601", "Before", "before@example.com", "DEV01", EmploymentStatus.ACTIVE));
+
+        SyncJobResult changed = employeeSyncService.synchronize(List.of(
+                hr("E-2601", "After", "after@example.com", "DEV02", "TERMINATED")));
+
+        List<IntegrationTask> tasks = integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(employee.getId());
+        assertThat(tasks).hasSize(1);
+        assertThat(tasks.getFirst().getAction()).isEqualTo(IntegrationAction.DISABLE_ACCOUNT);
+        assertThat(tasks.getFirst().getPayload())
+                .contains("\"name\":\"After\"")
+                .contains("\"departmentCode\":\"DEV02\"")
+                .contains("\"employmentStatus\":\"TERMINATED\"");
+
+        employeeSyncService.synchronize(List.of(
+                hr("E-2601", "Rehired", "rehired@example.com", "DEV03", "ACTIVE")));
+
+        List<IntegrationTask> afterRehire = integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(employee.getId());
+        assertThat(afterRehire).hasSize(2);
+        assertThat(afterRehire.get(1).getAction()).isEqualTo(IntegrationAction.UPDATE_ACCOUNT);
+        assertThat(afterRehire.getFirst().getPayload())
+                .contains("\"name\":\"After\"")
+                .contains("\"departmentCode\":\"DEV02\"")
+                .doesNotContain("Rehired", "DEV03");
+        AuditLog updatedAudit = auditLogRepository.findAllBySyncItem_Id(
+                syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(changed.id()).getFirst().getId())
+                .getFirst();
+        assertThat(updatedAudit.getAction()).isEqualTo(AuditAction.UPDATED);
+        assertThat(updatedAudit.getChanges())
+                .contains("\"name\":{\"before\":\"Before\",\"after\":\"After\"}")
+                .contains("\"email\":{\"before\":\"before@example.com\",\"after\":\"after@example.com\"}")
+                .contains("\"departmentCode\":{\"before\":\"DEV01\",\"after\":\"DEV02\"}")
+                .contains("\"employmentStatus\":{\"before\":\"ACTIVE\",\"after\":\"TERMINATED\"}");
+    }
+
+    @Test
+    void idempotencyKeyIsUniqueInPostgres() {
+        SyncJobResult result = employeeSyncService.synchronize(List.of(
+                hr("E-2701", "One", null, null, "ACTIVE"),
+                hr("E-2702", "Two", null, null, "ACTIVE")));
+        List<SyncItem> items = syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(result.id());
+        List<IntegrationTask> tasks = items.stream()
+                .map(item -> integrationTaskRepository.findAllBySyncItem_Id(item.getId()).getFirst())
+                .toList();
+        IntegrationTask duplicate = tasks.getFirst();
+        SyncItem secondItem = items.get(1);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                INSERT INTO integration_task (
+                    employee_id, sync_item_id, target, action, status, payload, idempotency_key,
+                    retry_count, max_retry_count, created_at, updated_at
+                ) VALUES (?, ?, 'GROUPWARE', 'CREATE_ACCOUNT', 'PENDING', '{}', ?, 0, 3, now(), now())
+                """, secondItem.getEmployeeId(), secondItem.getId(), duplicate.getIdempotencyKey()))
+                .isInstanceOf(DataAccessException.class);
+        assertThat(integrationTaskRepository.count()).isEqualTo(2);
     }
 
     @Test
@@ -142,6 +268,8 @@ class EmployeeSyncServiceIntegrationTest {
                 .containsExactly(SyncItemResult.INSERTED, SyncItemResult.FAILED, SyncItemResult.INSERTED);
         assertThat(items.get(1).getErrorCode()).isEqualTo("INVALID_EMAIL");
         assertThat(items.get(1).getEmployeeId()).isNull();
+        assertThat(auditLogRepository.count()).isEqualTo(2);
+        assertThat(integrationTaskRepository.count()).isEqualTo(2);
     }
 
     @Test
@@ -166,21 +294,21 @@ class EmployeeSyncServiceIntegrationTest {
     @Test
     void databaseConstraintFailureIsIsolatedAndOtherEmployeesCommit() {
         SyncJobResult result = employeeSyncService.synchronize(List.of(
-                hr("E-5001", "Before", null, null, "ACTIVE"),
-                hr("E-5002", "N".repeat(201), null, null, "ACTIVE"),
-                hr("E-5003", "After", null, null, "ACTIVE")));
+                hr("E-5001", "N".repeat(201), null, null, "ACTIVE"),
+                hr("E-5002", "After", null, null, "ACTIVE")));
 
         assertThat(result.status()).isEqualTo(SyncJobStatus.COMPLETED_WITH_ERRORS);
-        assertThat(result.insertedCount()).isEqualTo(2);
+        assertThat(result.insertedCount()).isEqualTo(1);
         assertThat(result.failedCount()).isEqualTo(1);
-        assertThat(employeeRepository.findByEmployeeNo("E-5001")).isPresent();
-        assertThat(employeeRepository.findByEmployeeNo("E-5002")).isEmpty();
-        assertThat(employeeRepository.findByEmployeeNo("E-5003")).isPresent();
+        assertThat(employeeRepository.findByEmployeeNo("E-5001")).isEmpty();
+        assertThat(employeeRepository.findByEmployeeNo("E-5002")).isPresent();
 
         List<SyncItem> items = syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(result.id());
         assertThat(items).extracting(SyncItem::getResult)
-                .containsExactly(SyncItemResult.INSERTED, SyncItemResult.FAILED, SyncItemResult.INSERTED);
-        assertThat(items.get(1).getErrorCode()).isEqualTo("DATA_INTEGRITY_VIOLATION");
+                .containsExactly(SyncItemResult.FAILED, SyncItemResult.INSERTED);
+        assertThat(items.getFirst().getErrorCode()).isEqualTo("DATA_INTEGRITY_VIOLATION");
+        assertThat(auditLogRepository.count()).isEqualTo(1);
+        assertThat(integrationTaskRepository.count()).isEqualTo(1);
     }
 
     @Test
@@ -199,6 +327,44 @@ class EmployeeSyncServiceIntegrationTest {
         assertThat(items.get(0).getResult()).isEqualTo(SyncItemResult.FAILED);
         assertThat(items.get(0).getErrorCode()).isEqualTo("DATA_INTEGRITY_VIOLATION");
         assertThat(items.get(0).getEmployeeId()).isNull();
+        assertThat(auditLogRepository.count()).isZero();
+        assertThat(integrationTaskRepository.count()).isZero();
+    }
+
+    @Test
+    void auditFailureRollsBackEmployeeAndSuccessItem() {
+        createRejectAuditLogTrigger();
+
+        SyncJobResult result = employeeSyncService.synchronize(List.of(
+                hr("E-6501", "Audit failure", null, null, "ACTIVE")));
+
+        assertThat(result.status()).isEqualTo(SyncJobStatus.COMPLETED_WITH_ERRORS);
+        assertThat(employeeRepository.findByEmployeeNo("E-6501")).isEmpty();
+        assertThat(auditLogRepository.count()).isZero();
+        assertThat(integrationTaskRepository.count()).isZero();
+        List<SyncItem> items = syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(result.id());
+        assertThat(items).singleElement().satisfies(item -> {
+            assertThat(item.getResult()).isEqualTo(SyncItemResult.FAILED);
+            assertThat(item.getEmployeeId()).isNull();
+        });
+    }
+
+    @Test
+    void integrationTaskFailureRollsBackEmployeeSyncItemAndAudit() {
+        createRejectIntegrationTaskTrigger();
+
+        SyncJobResult result = employeeSyncService.synchronize(List.of(
+                hr("E-6601", "Task failure", null, null, "ACTIVE")));
+
+        assertThat(result.status()).isEqualTo(SyncJobStatus.COMPLETED_WITH_ERRORS);
+        assertThat(employeeRepository.findByEmployeeNo("E-6601")).isEmpty();
+        assertThat(auditLogRepository.count()).isZero();
+        assertThat(integrationTaskRepository.count()).isZero();
+        List<SyncItem> items = syncItemRepository.findAllBySyncJob_IdOrderByRowNumberAsc(result.id());
+        assertThat(items).singleElement().satisfies(item -> {
+            assertThat(item.getResult()).isEqualTo(SyncItemResult.FAILED);
+            assertThat(item.getEmployeeId()).isNull();
+        });
     }
 
     @Test
@@ -284,9 +450,45 @@ class EmployeeSyncServiceIntegrationTest {
                 """);
     }
 
-    private void dropSyncItemInsertTrigger() {
+    private void createRejectAuditLogTrigger() {
+        jdbcTemplate.execute("""
+                CREATE FUNCTION test_reject_audit_log() RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE check_violation USING MESSAGE = 'test rejects audit log';
+                END;
+                $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER test_reject_audit_log
+                BEFORE INSERT ON audit_log
+                FOR EACH ROW EXECUTE FUNCTION test_reject_audit_log()
+                """);
+    }
+
+    private void createRejectIntegrationTaskTrigger() {
+        jdbcTemplate.execute("""
+                CREATE FUNCTION test_reject_integration_task() RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE check_violation USING MESSAGE = 'test rejects integration task';
+                END;
+                $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER test_reject_integration_task
+                BEFORE INSERT ON integration_task
+                FOR EACH ROW EXECUTE FUNCTION test_reject_integration_task()
+                """);
+    }
+
+    private void dropTestTriggers() {
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS test_reject_inserted_sync_item ON sync_item");
         jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_reject_inserted_sync_item()");
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS test_reject_audit_log ON audit_log");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_reject_audit_log()");
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS test_reject_integration_task ON integration_task");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_reject_integration_task()");
         jdbcTemplate.execute("DROP TRIGGER IF EXISTS test_raise_employee_system_error ON employee");
         jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_raise_employee_system_error()");
     }

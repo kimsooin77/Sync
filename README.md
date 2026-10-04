@@ -44,7 +44,7 @@ macOS 또는 Linux:
 
 ## 현재 범위
 
-직원 엔티티와 저장소, V1·V2 스키마, PostgreSQL 기반 통합 테스트, HR 직원 행의 정규화와 동기화 결과 기록을 포함합니다. 실제 HR API 호출, 감사 기록, 계정 연계 작업과 Worker, 재시도는 아직 구현하지 않았습니다.
+직원 엔티티와 저장소, V1·V3 스키마, PostgreSQL 기반 통합 테스트, HR 직원 행의 정규화와 동기화 결과 기록을 포함합니다. Groupware HTTP 호출과 Worker 실행은 아직 구현하지 않았습니다.
 
 ## 직원 스냅샷 규칙
 
@@ -58,11 +58,17 @@ HR에서 받은 각 직원 행은 전체 스냅샷입니다. 사번은 앞뒤 �
 
 제공된 HR 행 목록을 한 번의 동기화 실행으로 처리합니다. `SyncJob`은 전체 입력 행 수, INSERT·UPDATE·SKIP·FAILED 집계, 실행 상태와 시작·종료 시각을 기록합니다. `SyncItem`은 각 입력 행의 결과를 기록하며 정규화 실패도 포함합니다.
 
-정규화한 사번으로 기존 직원을 조회하고 이름, 이메일, 부서 코드, 재직 상태를 비교합니다. 직원이 없으면 INSERT, 비교 필드가 달라지면 UPDATE, 모두 같으면 SKIP합니다. INSERTED, UPDATED, SKIPPED 결과는 해당 Employee에 연결하고, FAILED 결과는 원칙적으로 Employee에 연결하지 않습니다. 행 하나의 정규화 오류나 데이터베이스 제약 오류는 해당 행의 FAILED 결과로 기록하고 다음 행을 계속 처리합니다. 직원 저장과 성공 결과 저장은 한 직원 단위로 함께 커밋하거나 롤백합니다. 시스템 오류가 발생하면 실행을 FAILED로 표시하고 오류를 호출자에게 전달합니다.
+정규화한 사번으로 기존 직원을 조회하고 이름, 이메일, 부서 코드, 재직 상태를 비교합니다. 직원이 없으면 INSERT, 비교 필드가 달라지면 UPDATE, 모두 같으면 SKIP합니다. INSERTED, UPDATED, SKIPPED 결과는 해당 Employee에 연결하고, FAILED 결과는 원칙적으로 Employee에 연결하지 않습니다. 행 하나의 정규화 오류나 데이터베이스 제약 오류는 해당 행의 FAILED 결과로 기록하고 다음 행을 계속 처리합니다.
+
+INSERT와 UPDATE는 Employee, SyncItem, AuditLog, 해당되는 IntegrationTask를 직원별 트랜잭션 하나에서 저장합니다. 하나라도 저장에 실패하면 그 직원의 변경과 성공 기록은 함께 롤백되고 FAILED SyncItem만 별도 기록됩니다. SKIP은 Employee에 연결된 SyncItem만 기록하며 AuditLog나 IntegrationTask를 만들지 않습니다. 정규화 실패도 FAILED SyncItem만 기록합니다.
+
+AuditLog는 생성 시점의 직원 스냅샷 전체를 기록하고, 수정 시에는 Day3에서 계산한 변경 필드와 이전·이후 값만 기록합니다. IntegrationTask의 payload도 생성 시점의 Employee 스냅샷이며 이후 직원 정보가 바뀌어도 달라지지 않습니다. AuditLog 변경 내용과 Task payload는 JSON 문자열을 TEXT로 저장하고, Task의 멱등 키는 UUID입니다.
+
+신규 ACTIVE 또는 ON_LEAVE 직원은 `CREATE_ACCOUNT` Task를 만듭니다. 신규 TERMINATED 직원은 Task를 만들지 않습니다. 기존 직원이 TERMINATED로 바뀌면 `DISABLE_ACCOUNT`, 그 외 수정은 `UPDATE_ACCOUNT`를 사용합니다. 퇴사 후 재입사는 `UPDATE_ACCOUNT`입니다. Task는 `PENDING`, retryCount 0, maxRetryCount 3으로 생성됩니다. 현재는 Groupware HTTP 호출, Worker, 재시도를 실행하지 않습니다.
 
 동기화 실행이 FAILED이면 실행 자체가 정상적으로 완료되지 못했다는 뜻입니다. 직원별 처리는 각각 커밋되므로 시스템 오류 전에 완료된 직원과 결과는 남을 수 있으며, FAILED가 전체 직원 처리를 원자적으로 롤백했다는 뜻은 아닙니다.
 
-현재는 HR HTTP API를 호출하지 않습니다. AuditLog, IntegrationTask, 외부 계정 연계, Worker와 재시도는 이후 단계 범위입니다.
+현재는 HR HTTP API나 Groupware HTTP API를 호출하지 않습니다. Worker, 실제 외부 계정 연계와 재시도는 이후 단계 범위입니다.
 
 Flyway migration이 데이터베이스 스키마의 유일한 기준이며, Hibernate는 `validate` 모드로 매핑과 스키마를 확인합니다.
 
