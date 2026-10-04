@@ -1,0 +1,23 @@
+[
+  {
+    "employee_no": " E1001 ",
+    "employee_name": " 김수인 내부  공백 ",
+    "email": " SOOIN@COMPANY.COM ",
+    "department_code": " DEV01 ",
+    "employment_status": "active"
+  },
+  {
+    "employee_no": " E1002 ",
+    "employee_name": " 홍길동 ",
+    "email": " ",
+    "department_code": null,
+    "employment_status": " ON_LEAVE "
+  },
+  {
+    "employee_no": " E1003 ",
+    "employee_name": "오류 직원",
+    "email": "not-an-email",
+    "department_code": " FIN ",
+    "employment_status": "UNKNOWN"
+  }
+]
