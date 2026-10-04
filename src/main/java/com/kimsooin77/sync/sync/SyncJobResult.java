@@ -10,6 +10,8 @@ public record SyncJobResult(
         int updatedCount,
         int skippedCount,
         int failedCount,
+        String failureCode,
+        String failureMessage,
         Instant startedAt,
         Instant finishedAt
 ) {
@@ -23,6 +25,8 @@ public record SyncJobResult(
                 job.getUpdatedCount(),
                 job.getSkippedCount(),
                 job.getFailedCount(),
+                job.getFailureCode(),
+                job.getFailureMessage(),
                 job.getStartedAt(),
                 job.getFinishedAt());
     }

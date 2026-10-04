@@ -1,6 +1,6 @@
 # Employee Lifecycle Sync
 
-사내 인사 시스템의 직원 정보를 동기화하기 위한 Spring Boot 애플리케이션입니다. 현재 단계에서는 제공된 HR 직원 행을 정규화하고 기존 직원 정보와 비교해 동기화 실행 및 행별 결과를 PostgreSQL에 기록합니다.
+사내 인사 시스템의 직원 정보를 동기화하기 위한 Spring Boot 애플리케이션입니다. HR API에서 전체 직원 스냅샷을 가져와 정규화하고 기존 직원 정보와 비교해 동기화 실행 및 행별 결과를 PostgreSQL에 기록합니다.
 
 ## 요구 사항
 
@@ -42,9 +42,25 @@ macOS 또는 Linux:
 
 `bootRun`은 기본 포트 8080에서 애플리케이션을 시작합니다. `test`는 PostgreSQL 17.11 Testcontainers를 사용하므로 Docker 엔진이 실행 중이어야 합니다.
 
+## HR 동기화 API
+
+`POST /api/sync-jobs`는 먼저 `RUNNING` 동기화 작업을 저장한 뒤 `HR_BASE_URL`의 `GET /mock/hr/employees`를 호출합니다. 직원 처리가 끝나면 작업별 건수와 상태를 반환합니다. 응답은 `201 Created`이며 본문에는 작업 ID, 상태, 처리 건수와 시작·종료 시각이 포함됩니다. 응답의 `Location` 경로인 `GET /api/sync-jobs/{id}`에서 같은 작업 결과를 조회할 수 있으며, 작업이 없으면 `404 Not Found`를 반환합니다. 작업 생성 자체가 실패하면 서버 오류를 반환합니다.
+
+외부 HR JSON은 `employee_no`, `employee_name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. HR HTTP 호출은 DB 트랜잭션 밖에서 수행합니다. 연결 오류, 시간 초과, HTTP 오류 또는 전체 응답 해석 실패는 직원 행을 만들지 않고 `FAILED` 작업으로 기록하며, 응답에는 안전한 오류 코드와 일반 메시지만 포함합니다. 한 직원의 잘못된 재직 상태는 해당 행만 실패 처리하고 나머지 행은 계속 처리합니다.
+
+로컬에서 예제 HR API를 사용하려면 애플리케이션을 시작할 때 다음 환경 변수를 설정합니다. Mock HR API는 기본적으로 비활성화되어 있습니다.
+
+```powershell
+$env:MOCK_HR_ENABLED = 'true'
+$env:HR_BASE_URL = 'http://localhost:8080'
+.\gradlew.bat bootRun
+```
+
+다른 터미널에서 `Invoke-RestMethod -Method Post http://localhost:8080/api/sync-jobs`를 호출합니다. 기본 `initial` 시나리오는 직원 3명을 반환합니다. 같은 요청을 다시 보내면 동일 스냅샷이므로 세 행이 `SKIPPED`됩니다. `MOCK_HR_SCENARIO=changed`로 설정하고 애플리케이션을 다시 시작하면 부서 변경과 퇴사 상태 변경을 확인할 수 있습니다. `partial-invalid` 시나리오는 한 행의 재직 상태를 알 수 없는 값으로 보내 행 단위 오류 격리를 확인합니다.
+
 ## 현재 범위
 
-직원 엔티티와 저장소, V1·V3 스키마, PostgreSQL 기반 통합 테스트, HR 직원 행의 정규화와 동기화 결과 기록을 포함합니다. Groupware HTTP 호출과 Worker 실행은 아직 구현하지 않았습니다.
+직원 엔티티와 저장소, V1~V4 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록을 포함합니다. Groupware HTTP 호출과 Worker 실행은 아직 구현하지 않았습니다.
 
 ## 직원 스냅샷 규칙
 
@@ -68,7 +84,7 @@ AuditLog는 생성 시점의 직원 스냅샷 전체를 기록하고, 수정 시
 
 동기화 실행이 FAILED이면 실행 자체가 정상적으로 완료되지 못했다는 뜻입니다. 직원별 처리는 각각 커밋되므로 시스템 오류 전에 완료된 직원과 결과는 남을 수 있으며, FAILED가 전체 직원 처리를 원자적으로 롤백했다는 뜻은 아닙니다.
 
-현재는 HR HTTP API나 Groupware HTTP API를 호출하지 않습니다. Worker, 실제 외부 계정 연계와 재시도는 이후 단계 범위입니다.
+실제 HR 주소는 `HR_BASE_URL`, 연결 제한 시간은 `HR_CONNECT_TIMEOUT`, 응답 제한 시간은 `HR_READ_TIMEOUT`으로 설정합니다. HR 호출 재시도는 아직 수행하지 않습니다. Groupware HTTP 호출, Worker와 실제 외부 계정 연계는 이후 단계 범위입니다.
 
 Flyway migration이 데이터베이스 스키마의 유일한 기준이며, Hibernate는 `validate` 모드로 매핑과 스키마를 확인합니다.
 
@@ -77,12 +93,14 @@ Flyway migration이 데이터베이스 스키마의 유일한 기준이며, Hibe
 이 작업 환경에서 일반 작업 경로의 기존 Gradle 산출물을 삭제하는 clean 작업이 실패한 적이 있습니다. 원인은 확정하지 않았습니다. 아래 PowerShell 명령은 Gradle 산출물만 임시 디렉터리로 보내 전체 빌드와 테스트를 수행하며 저장소 설정은 바꾸지 않습니다.
 
 ```powershell
-$employeeLifecycleSyncInit = Join-Path $env:TEMP ('employee-lifecycle-sync-init-' + [guid]::NewGuid().ToString('N') + '.gradle')
-$employeeLifecycleSyncScript = @'
+$employeeLifecycleSyncRunId = [guid]::NewGuid().ToString('N')
+$employeeLifecycleSyncInit = Join-Path $env:TEMP ('employee-lifecycle-sync-init-' + $employeeLifecycleSyncRunId + '.gradle')
+$employeeLifecycleSyncOutput = 'employee-lifecycle-sync-build-' + $employeeLifecycleSyncRunId
+$employeeLifecycleSyncScript = @"
 allprojects {
-    layout.buildDirectory.set(new File(System.getProperty('java.io.tmpdir'), 'employee-lifecycle-sync-build-output'))
+    layout.buildDirectory.set(new File(System.getProperty('java.io.tmpdir'), '$employeeLifecycleSyncOutput'))
 }
-'@
+"@
 [System.IO.File]::WriteAllText($employeeLifecycleSyncInit, $employeeLifecycleSyncScript, (New-Object System.Text.UTF8Encoding($false)))
 try {
     .\gradlew.bat --no-daemon --init-script $employeeLifecycleSyncInit clean build

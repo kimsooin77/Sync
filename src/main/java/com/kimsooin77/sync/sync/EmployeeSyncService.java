@@ -28,8 +28,15 @@ public class EmployeeSyncService {
     public SyncJobResult synchronize(List<HrEmployeeResponse> rows) {
         Objects.requireNonNull(rows, "rows");
         Long syncJobId = syncJobTransactionService.start(rows.size());
+        return synchronize(syncJobId, rows);
+    }
+
+    public SyncJobResult synchronize(Long syncJobId, List<HrEmployeeResponse> rows) {
+        Objects.requireNonNull(syncJobId, "syncJobId");
+        Objects.requireNonNull(rows, "rows");
 
         try {
+            syncJobTransactionService.setTotalCount(syncJobId, rows.size());
             List<NormalizationResult> normalizedRows = employeeBatchNormalizer.normalize(rows);
             if (normalizedRows.size() != rows.size()) {
                 throw new IllegalStateException("normalization result count must equal input row count");

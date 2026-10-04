@@ -1,14 +1,17 @@
 package com.kimsooin77.sync.sync;
 
-import tools.jackson.databind.PropertyNamingStrategies;
-import tools.jackson.databind.annotation.JsonNaming;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record HrEmployeeResponse(
+        @JsonProperty("employee_no")
         String employeeNo,
+        @JsonProperty("employee_name")
         String employeeName,
+        @JsonProperty("email")
         String email,
+        @JsonProperty("department_code")
         String departmentCode,
+        @JsonProperty("employment_status")
         String employmentStatus
 ) {
 }

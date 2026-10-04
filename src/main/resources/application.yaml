@@ -11,3 +11,12 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+app:
+  hr:
+    base-url: ${HR_BASE_URL:http://localhost:8080}
+    connect-timeout: ${HR_CONNECT_TIMEOUT:2s}
+    read-timeout: ${HR_READ_TIMEOUT:5s}
+  mock:
+    hr:
+      enabled: ${MOCK_HR_ENABLED:false}
+      scenario: ${MOCK_HR_SCENARIO:initial}

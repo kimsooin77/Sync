@@ -39,6 +39,12 @@ public class SyncJob {
     @Column(name = "failed_count", nullable = false)
     private int failedCount;
 
+    @Column(name = "failure_code", length = 64)
+    private String failureCode;
+
+    @Column(name = "failure_message", length = 500)
+    private String failureMessage;
+
     @Column(name = "started_at", nullable = false, updatable = false)
     private Instant startedAt;
 
@@ -46,6 +52,7 @@ public class SyncJob {
     private Instant finishedAt;
 
     protected SyncJob() {
+        this(0);
     }
 
     public SyncJob(int totalCount) {
@@ -57,6 +64,17 @@ public class SyncJob {
         this.startedAt = Instant.now();
     }
 
+    void setTotalCount(int totalCount) {
+        ensureRunning();
+        if (totalCount < 0) {
+            throw new IllegalArgumentException("totalCount must not be negative");
+        }
+        if (insertedCount + updatedCount + skippedCount + failedCount != 0) {
+            throw new IllegalStateException("cannot change totalCount after employee processing has started");
+        }
+        this.totalCount = totalCount;
+    }
+
     void complete(int insertedCount, int updatedCount, int skippedCount, int failedCount) {
         ensureRunning();
         setCounts(insertedCount, updatedCount, skippedCount, failedCount);
@@ -64,14 +82,33 @@ public class SyncJob {
             throw new IllegalStateException("completed item count must equal totalCount");
         }
         status = failedCount == 0 ? SyncJobStatus.COMPLETED : SyncJobStatus.COMPLETED_WITH_ERRORS;
+        failureCode = null;
+        failureMessage = null;
         finishedAt = Instant.now();
     }
 
-    void fail(int insertedCount, int updatedCount, int skippedCount, int failedCount) {
+    void fail(
+            int insertedCount,
+            int updatedCount,
+            int skippedCount,
+            int failedCount,
+            String failureCode,
+            String failureMessage
+    ) {
         ensureRunning();
         setCounts(insertedCount, updatedCount, skippedCount, failedCount);
         status = SyncJobStatus.FAILED;
+        this.failureCode = requireText(failureCode, "failureCode", 64);
+        this.failureMessage = requireText(failureMessage, "failureMessage", 500);
         finishedAt = Instant.now();
+    }
+
+    private static String requireText(String value, String name, int maxLength) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+        String normalized = value.strip();
+        return normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength);
     }
 
     private void ensureRunning() {
@@ -124,6 +161,14 @@ public class SyncJob {
 
     public int getFailedCount() {
         return failedCount;
+    }
+
+    public String getFailureCode() {
+        return failureCode;
+    }
+
+    public String getFailureMessage() {
+        return failureMessage;
     }
 
     public Instant getStartedAt() {

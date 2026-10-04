@@ -21,8 +21,20 @@ public class SyncJobTransactionService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Long start() {
+        return syncJobRepository.saveAndFlush(new SyncJob()).getId();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Long start(int totalCount) {
         return syncJobRepository.saveAndFlush(new SyncJob(totalCount)).getId();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void setTotalCount(Long syncJobId, int totalCount) {
+        SyncJob job = findJob(syncJobId);
+        job.setTotalCount(totalCount);
+        syncJobRepository.flush();
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -35,11 +47,19 @@ public class SyncJobTransactionService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void fail(Long syncJobId) {
+    public SyncJobResult fail(Long syncJobId, String failureCode, String failureMessage) {
         SyncJob job = findJob(syncJobId);
         Counts counts = counts(syncJobId);
-        job.fail(counts.inserted(), counts.updated(), counts.skipped(), counts.failed());
+        job.fail(
+                counts.inserted(), counts.updated(), counts.skipped(), counts.failed(),
+                failureCode, failureMessage);
         syncJobRepository.flush();
+        return SyncJobResult.from(job);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void fail(Long syncJobId) {
+        fail(syncJobId, "SYNC_PROCESSING_FAILED", "동기화 실행이 정상적으로 완료되지 못했습니다.");
     }
 
     private SyncJob findJob(Long syncJobId) {
