@@ -7,6 +7,8 @@ record IntegrationTaskCommand(
         IntegrationTarget target,
         IntegrationAction action,
         String payload,
-        UUID idempotencyKey
+        UUID idempotencyKey,
+        int retryCount,
+        int maxRetryCount
 ) {
 }

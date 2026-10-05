@@ -38,9 +38,12 @@ public class MockGroupwareController {
     }
 
     @PatchMapping("/{employeeNo}/disable")
-    ResponseEntity<Void> disable(@PathVariable String employeeNo, @RequestBody GroupwareAccountRequest request) {
+    ResponseEntity<?> disable(@PathVariable String employeeNo, @RequestBody GroupwareAccountRequest request) {
         validateEmployeeNo(employeeNo, request.employeeNo());
-        accountStore.disable(request);
+        if (!accountStore.disable(request)) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new MockGroupwareError("ACCOUNT_NOT_FOUND", "Groupware account was not found."));
+        }
         return ResponseEntity.ok().build();
     }
 

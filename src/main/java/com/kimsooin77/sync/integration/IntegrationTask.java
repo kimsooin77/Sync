@@ -174,13 +174,18 @@ public class IntegrationTask {
         return updatedAt;
     }
 
-    public void markProcessing() {
-        if (status != IntegrationTaskStatus.PENDING) {
-            throw new IllegalStateException("only pending integration tasks can be processed");
+    public void markProcessing(Instant now) {
+        Objects.requireNonNull(now, "now");
+        if (status == IntegrationTaskStatus.RETRY_WAIT) {
+            if (nextRetryAt == null || nextRetryAt.isAfter(now) || retryCount >= maxRetryCount) {
+                throw new IllegalStateException("integration task is not eligible for retry");
+            }
+            retryCount++;
+        } else if (status != IntegrationTaskStatus.PENDING) {
+            throw new IllegalStateException("only pending or due integration tasks can be processed");
         }
         status = IntegrationTaskStatus.PROCESSING;
-        lastErrorCode = null;
-        lastErrorMessage = null;
+        nextRetryAt = null;
     }
 
     public void markSucceeded() {
@@ -191,6 +196,19 @@ public class IntegrationTask {
         nextRetryAt = null;
         lastErrorCode = null;
         lastErrorMessage = null;
+    }
+
+    public void markRetryWait(String errorCode, String errorMessage, Instant retryAt) {
+        if (status != IntegrationTaskStatus.PROCESSING) {
+            throw new IllegalStateException("only processing integration tasks can wait for retry");
+        }
+        if (retryCount >= maxRetryCount) {
+            throw new IllegalStateException("integration task has exhausted automatic retries");
+        }
+        status = IntegrationTaskStatus.RETRY_WAIT;
+        lastErrorCode = Objects.requireNonNull(errorCode, "errorCode");
+        lastErrorMessage = Objects.requireNonNull(errorMessage, "errorMessage");
+        nextRetryAt = Objects.requireNonNull(retryAt, "retryAt");
     }
 
     public void markFailed(String errorCode, String errorMessage) {

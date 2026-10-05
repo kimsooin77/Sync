@@ -7,6 +7,8 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -17,25 +19,31 @@ public class IntegrationWorker {
     private final GroupwareClient groupwareClient;
     private final ObjectMapper objectMapper;
     private final IntegrationWorkerProperties properties;
+    private final IntegrationRetryPolicy retryPolicy;
+    private final Clock clock;
 
     public IntegrationWorker(
             IntegrationTaskTransactionService transactionService,
             GroupwareClient groupwareClient,
             ObjectMapper objectMapper,
-            IntegrationWorkerProperties properties
+            IntegrationWorkerProperties properties,
+            IntegrationRetryPolicy retryPolicy,
+            Clock clock
     ) {
         this.transactionService = Objects.requireNonNull(transactionService, "transactionService");
         this.groupwareClient = Objects.requireNonNull(groupwareClient, "groupwareClient");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
         this.properties = Objects.requireNonNull(properties, "properties");
+        this.retryPolicy = Objects.requireNonNull(retryPolicy, "retryPolicy");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     @Transactional(propagation = Propagation.NEVER)
     public int runBatch() {
-        List<Long> taskIds = transactionService.findPendingIds(properties.batchSize());
+        List<Long> taskIds = transactionService.findEligibleIds(properties.batchSize(), clock.instant());
         int processed = 0;
         for (Long taskId : taskIds) {
-            var command = transactionService.markProcessing(taskId);
+            var command = transactionService.markProcessing(taskId, clock.instant());
             if (command.isPresent()) {
                 process(command.get());
                 processed++;
@@ -56,17 +64,33 @@ public class IntegrationWorker {
             }
             request = GroupwareAccountRequest.from(snapshot);
         } catch (JacksonException | InvalidTaskPayloadException | NullPointerException invalidPayload) {
-            transactionService.markFailed(task.id(), "TASK_PAYLOAD_INVALID",
+            transactionService.markPayloadFailed(task.id(), "TASK_PAYLOAD_INVALID",
                     "Integration task payload is invalid");
             return;
         }
 
+        Instant startedAt = clock.instant();
+        GroupwareCallResult result = null;
+        GroupwareClientException failure = null;
         try {
-            groupwareClient.send(task.action(), request, task.idempotencyKey());
-            transactionService.markSucceeded(task.id());
-        } catch (GroupwareClientException failure) {
-            transactionService.markFailed(task.id(), failure.getErrorCode(), safeMessage(failure.getErrorCode()));
+            result = groupwareClient.send(task.action(), request, task.idempotencyKey());
+        } catch (GroupwareClientException externalFailure) {
+            failure = externalFailure;
         }
+        Instant finishedAt = clock.instant();
+
+        if (failure == null) {
+            transactionService.recordSucceeded(task.id(), task.retryCount() + 1, startedAt, finishedAt,
+                    result.httpStatus());
+            return;
+        }
+
+        String safeMessage = safeMessage(failure.getErrorCode());
+        Instant retryAt = retryPolicy.isRetryable(failure)
+                ? retryPolicy.nextRetryAt(task.retryCount(), task.maxRetryCount(), finishedAt).orElse(null)
+                : null;
+        transactionService.recordFailed(task.id(), task.retryCount() + 1, startedAt, finishedAt,
+                failure.getHttpStatus(), failure.getErrorCode(), safeMessage, retryAt);
     }
 
     private static String safeMessage(String errorCode) {
@@ -74,7 +98,8 @@ public class IntegrationWorker {
             case "GROUPWARE_HTTP_ERROR" -> "Groupware returned an HTTP error";
             case "GROUPWARE_CONNECTION_ERROR" -> "Could not connect to Groupware";
             case "GROUPWARE_TIMEOUT" -> "Groupware request timed out";
-            default -> "Groupware response could not be processed";
+            case "GROUPWARE_RESPONSE_INVALID" -> "Groupware response could not be processed";
+            default -> "Integration task could not be processed";
         };
     }
 

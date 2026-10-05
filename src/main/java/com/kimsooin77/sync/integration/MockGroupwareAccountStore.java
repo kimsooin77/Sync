@@ -25,16 +25,19 @@ public class MockGroupwareAccountStore {
         accounts.put(request.employeeNo(), GroupwareAccount.from(request, true));
     }
 
-    void disable(GroupwareAccountRequest request) {
+    boolean disable(GroupwareAccountRequest request) {
+        boolean[] found = {false};
         accounts.compute(request.employeeNo(), (employeeNo, existing) -> {
             if (existing == null) {
                 return null;
             }
+            found[0] = true;
             if (!existing.enabled()) {
                 return existing;
             }
             return GroupwareAccount.from(request, false);
         });
+        return found[0];
     }
 
     GroupwareAccount find(String employeeNo) {

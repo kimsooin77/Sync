@@ -60,7 +60,7 @@ $env:HR_BASE_URL = 'http://localhost:8080'
 
 ## 현재 범위
 
-직원 엔티티와 저장소, V1~V4 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker를 포함합니다. 자동 재시도와 PROCESSING Task 복구는 아직 구현하지 않았습니다.
+직원 엔티티와 저장소, V1~V5 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker, 자동 재시도 및 외부 호출 Attempt 이력을 포함합니다. PROCESSING Task 복구와 수동 재시도는 아직 구현하지 않았습니다.
 
 ## 직원 스냅샷 규칙
 
@@ -86,13 +86,15 @@ AuditLog는 생성 시점의 직원 스냅샷 전체를 기록하고, 수정 시
 
 Worker는 기본적으로 비활성화되어 있습니다. 실행하려면 `INTEGRATION_WORKER_ENABLED=true`로 설정합니다. 기본 batch size는 10이며 `INTEGRATION_WORKER_BATCH_SIZE`로 조정할 수 있습니다. `INTEGRATION_WORKER_FIXED_DELAY`는 기본 3초입니다. Groupware 주소와 timeout은 각각 `GROUPWARE_BASE_URL`, `GROUPWARE_CONNECT_TIMEOUT`, `GROUPWARE_READ_TIMEOUT`으로 설정합니다.
 
-Worker는 생성 시각과 ID 순서로 PENDING Task를 조회하고 각 Task를 PROCESSING으로 커밋한 뒤 Groupware HTTP 요청을 보냅니다. HTTP 요청 중에는 DB 트랜잭션을 열지 않습니다. 각 요청이 끝나면 SUCCESS 또는 FAILED를 별도 트랜잭션으로 기록합니다. Day 6에서는 자동 재시도를 수행하지 않으며 연계 실패는 FAILED로 남습니다.
+Worker는 생성 시각과 ID 순서로 PENDING Task와 재시도 시각이 지난 RETRY_WAIT Task를 조회합니다. 각 Task를 PROCESSING으로 커밋한 뒤 Groupware HTTP 요청을 보냅니다. HTTP 요청 중에는 DB 트랜잭션을 열지 않습니다. 실제 HTTP 호출마다 `IntegrationAttempt`를 하나 기록하고 Attempt와 Task 결과를 같은 별도 트랜잭션에서 저장합니다. payload 해석이나 검증이 HTTP 전에 실패하면 Task를 FAILED 처리하고 Attempt는 만들지 않습니다.
 
-Groupware API 계약은 `POST /mock/groupware/accounts`(신규 생성), `PUT /mock/groupware/accounts/{employeeNo}`(계정 생성 또는 활성 상태로 갱신), `PATCH /mock/groupware/accounts/{employeeNo}/disable`(비활성 상태 보장)입니다. POST는 기존 계정에 409를 반환하고, PUT은 계정이 없으면 새로 만듭니다. DISABLE은 이미 비활성인 계정과 없는 계정에 성공하며, 외부 Groupware의 404도 성공으로 취급합니다. DTO는 `employee_no`, `name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. Task의 UUID 멱등 키는 `Idempotency-Key` 헤더로 전달됩니다.
+`retryCount`는 지금까지 시작된 자동 재시도 횟수입니다. 최초 호출은 0이며, RETRY_WAIT에서 PROCESSING으로 다시 넘어갈 때 1 증가합니다. 따라서 실제 호출 번호는 항상 `attemptNo = retryCount + 1`입니다. 연결 실패, timeout, HTTP 429·500·502·503·504는 각각 5초, 15초, 30초 대기 후 자동 재시도합니다. 네 번째 호출도 실패하면 FAILED가 됩니다. 그 외 4xx, 계약 또는 응답 해석 오류는 자동 재시도하지 않습니다. Worker는 다음 재시도 시각까지 대기하지 않고 다른 실행 가능한 Task를 처리합니다.
+
+Groupware API 계약은 `POST /mock/groupware/accounts`(신규 생성), `PUT /mock/groupware/accounts/{employeeNo}`(계정 생성 또는 활성 상태로 갱신), `PATCH /mock/groupware/accounts/{employeeNo}/disable`(비활성 상태 보장)입니다. POST는 기존 계정에 409를 반환하고, PUT은 계정이 없으면 새로 만듭니다. DISABLE은 이미 비활성인 계정과 없는 계정에 성공합니다. 계정 없음 응답은 HTTP 404와 `code=ACCOUNT_NOT_FOUND`를 반환하며, GroupwareClient는 DISABLE 요청의 이 정확한 오류 코드만 업무상 성공으로 처리합니다. 다른 404는 실패로 기록합니다. DTO는 `employee_no`, `name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. Task의 UUID 멱등 키는 `Idempotency-Key` 헤더로 전달되며 자동 재시도에서도 유지됩니다.
 
 Mock Groupware는 기본적으로 비활성화되어 있습니다. 앱 내부 Mock API를 사용하려면 `MOCK_GROUPWARE_ENABLED=true`로 설정합니다. 계정은 메모리에만 저장되므로 애플리케이션을 재시작하면 사라집니다.
 
-Task가 PROCESSING으로 커밋된 직후 애플리케이션이 종료되면 해당 Task는 PROCESSING에 남아 Day 6 Worker가 다시 처리하지 않습니다. lease 및 복구는 Day 8 멱등성·복구 단계에서 다룹니다.
+Task가 PROCESSING으로 커밋된 직후 애플리케이션이 종료되면 해당 Task는 PROCESSING에 남아 Worker가 다시 처리하지 않습니다. 외부 요청 성공 후 Attempt와 Task 결과 저장 전에 애플리케이션이 종료된 경우에도 결과는 PROCESSING으로 남을 수 있습니다. lease 및 복구는 Day 8 멱등성·복구 단계에서 다룹니다.
 
 동기화 실행이 FAILED이면 실행 자체가 정상적으로 완료되지 못했다는 뜻입니다. 직원별 처리는 각각 커밋되므로 시스템 오류 전에 완료된 직원과 결과는 남을 수 있으며, FAILED가 전체 직원 처리를 원자적으로 롤백했다는 뜻은 아닙니다.
 

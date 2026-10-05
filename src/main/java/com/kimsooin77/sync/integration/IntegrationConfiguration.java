@@ -7,11 +7,17 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
+import java.time.Clock;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({GroupwareProperties.class, IntegrationWorkerProperties.class,
         MockGroupwareProperties.class})
 public class IntegrationConfiguration {
+
+    @Bean
+    Clock integrationClock() {
+        return Clock.systemUTC();
+    }
 
     @Bean
     RestClient groupwareRestClient(GroupwareProperties properties) {

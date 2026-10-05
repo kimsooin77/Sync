@@ -1,69 +1,48 @@
 package com.kimsooin77.sync.integration;
 
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.http.HttpStatusCode;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpTimeoutException;
+import java.util.Objects;
 import java.util.UUID;
 
 @Component
 public class GroupwareClient {
 
     private final RestClient restClient;
+    private final ObjectMapper objectMapper;
 
-    public GroupwareClient(@Qualifier("groupwareRestClient") RestClient restClient) {
-        this.restClient = restClient;
+    public GroupwareClient(@Qualifier("groupwareRestClient") RestClient restClient, ObjectMapper objectMapper) {
+        this.restClient = Objects.requireNonNull(restClient, "restClient");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
 
-    public void send(IntegrationAction action, GroupwareAccountRequest request, UUID idempotencyKey) {
+    public GroupwareCallResult send(IntegrationAction action, GroupwareAccountRequest request, UUID idempotencyKey) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Groupware HTTP calls must run outside a database transaction");
+        }
         try {
-            switch (action) {
-                case CREATE_ACCOUNT -> restClient.post()
-                        .uri("/mock/groupware/accounts")
-                        .header("Idempotency-Key", idempotencyKey.toString())
-                        .body(request)
-                        .retrieve()
-                        .onStatus(HttpStatusCode::isError, (httpRequest, response) -> {
-                            throw new GroupwareClientException("GROUPWARE_HTTP_ERROR",
-                                    "Groupware returned an HTTP error", response.getStatusCode().value(), null);
-                        })
-                        .toBodilessEntity();
-                case UPDATE_ACCOUNT -> restClient.put()
-                        .uri("/mock/groupware/accounts/{employeeNo}", request.employeeNo())
-                        .header("Idempotency-Key", idempotencyKey.toString())
-                        .body(request)
-                        .retrieve()
-                        .onStatus(HttpStatusCode::isError, (httpRequest, response) -> {
-                            throw new GroupwareClientException("GROUPWARE_HTTP_ERROR",
-                                    "Groupware returned an HTTP error", response.getStatusCode().value(), null);
-                        })
-                        .toBodilessEntity();
-                case DISABLE_ACCOUNT -> restClient.patch()
-                        .uri("/mock/groupware/accounts/{employeeNo}/disable", request.employeeNo())
-                        .header("Idempotency-Key", idempotencyKey.toString())
-                        .body(request)
-                        .retrieve()
-                        .onStatus(HttpStatusCode::isError, (httpRequest, response) -> {
-                            throw new GroupwareClientException("GROUPWARE_HTTP_ERROR",
-                                    "Groupware returned an HTTP error", response.getStatusCode().value(), null);
-                        })
-                        .toBodilessEntity();
-            }
+            return switch (action) {
+                case CREATE_ACCOUNT -> execute(HttpMethod.POST, "/mock/groupware/accounts", action,
+                        request, idempotencyKey);
+                case UPDATE_ACCOUNT -> execute(HttpMethod.PUT, "/mock/groupware/accounts/{employeeNo}", action,
+                        request, idempotencyKey, request.employeeNo());
+                case DISABLE_ACCOUNT -> execute(HttpMethod.PATCH,
+                        "/mock/groupware/accounts/{employeeNo}/disable", action, request, idempotencyKey,
+                        request.employeeNo());
+            };
         } catch (GroupwareClientException expectedFailure) {
-            if (action == IntegrationAction.DISABLE_ACCOUNT && Integer.valueOf(404).equals(
-                    expectedFailure.getHttpStatus())) {
-                return;
-            }
             throw expectedFailure;
-        } catch (RestClientResponseException httpFailure) {
-            throw new GroupwareClientException("GROUPWARE_HTTP_ERROR", "Groupware returned an HTTP error",
-                    httpFailure.getStatusCode().value(), httpFailure);
         } catch (ResourceAccessException connectionFailure) {
             String code = hasCause(connectionFailure, HttpTimeoutException.class)
                     || hasCause(connectionFailure, SocketTimeoutException.class)
@@ -73,6 +52,43 @@ public class GroupwareClient {
         } catch (RestClientException responseFailure) {
             throw new GroupwareClientException("GROUPWARE_RESPONSE_INVALID",
                     "Groupware response could not be processed", null, responseFailure);
+        }
+    }
+
+    private GroupwareCallResult execute(HttpMethod method, String uri, IntegrationAction action,
+                                        GroupwareAccountRequest request, UUID idempotencyKey,
+                                        Object... uriVariables) {
+        return restClient.method(method)
+                .uri(uri, uriVariables)
+                .header("Idempotency-Key", idempotencyKey.toString())
+                .body(request)
+                .exchange((httpRequest, response) -> {
+                    int status = response.getStatusCode().value();
+                    byte[] responseBody;
+                    try {
+                        responseBody = response.getBody().readAllBytes();
+                    } catch (IOException ioFailure) {
+                        throw new GroupwareClientException("GROUPWARE_RESPONSE_INVALID",
+                                "Groupware response could not be processed", status, ioFailure);
+                    }
+                    if (status >= 200 && status < 300) {
+                        return new GroupwareCallResult(status);
+                    }
+                    if (action == IntegrationAction.DISABLE_ACCOUNT && status == 404
+                            && isAccountNotFound(responseBody)) {
+                        return new GroupwareCallResult(status);
+                    }
+                    throw new GroupwareClientException("GROUPWARE_HTTP_ERROR",
+                            "Groupware returned an HTTP error", status, null);
+                });
+    }
+
+    private boolean isAccountNotFound(byte[] responseBody) {
+        try {
+            MockGroupwareError error = objectMapper.readValue(responseBody, MockGroupwareError.class);
+            return error != null && "ACCOUNT_NOT_FOUND".equals(error.code());
+        } catch (JacksonException invalidBody) {
+            return false;
         }
     }
 
