@@ -60,7 +60,7 @@ $env:HR_BASE_URL = 'http://localhost:8080'
 
 ## 현재 범위
 
-직원 엔티티와 저장소, V1~V5 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker, 자동 재시도 및 외부 호출 Attempt 이력을 포함합니다. PROCESSING Task 복구와 수동 재시도는 아직 구현하지 않았습니다.
+직원 엔티티와 저장소, V1~V6 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker, 자동 재시도, 외부 호출 Attempt 이력, Mock Groupware 멱등 처리와 오래된 PROCESSING Task 복구를 포함합니다. 수동 재시도는 아직 구현하지 않았습니다.
 
 ## 직원 스냅샷 규칙
 
@@ -86,15 +86,15 @@ AuditLog는 생성 시점의 직원 스냅샷 전체를 기록하고, 수정 시
 
 Worker는 기본적으로 비활성화되어 있습니다. 실행하려면 `INTEGRATION_WORKER_ENABLED=true`로 설정합니다. 기본 batch size는 10이며 `INTEGRATION_WORKER_BATCH_SIZE`로 조정할 수 있습니다. `INTEGRATION_WORKER_FIXED_DELAY`는 기본 3초입니다. Groupware 주소와 timeout은 각각 `GROUPWARE_BASE_URL`, `GROUPWARE_CONNECT_TIMEOUT`, `GROUPWARE_READ_TIMEOUT`으로 설정합니다.
 
-Worker는 생성 시각과 ID 순서로 PENDING Task와 재시도 시각이 지난 RETRY_WAIT Task를 조회합니다. 각 Task를 PROCESSING으로 커밋한 뒤 Groupware HTTP 요청을 보냅니다. HTTP 요청 중에는 DB 트랜잭션을 열지 않습니다. 실제 HTTP 호출마다 `IntegrationAttempt`를 하나 기록하고 Attempt와 Task 결과를 같은 별도 트랜잭션에서 저장합니다. payload 해석이나 검증이 HTTP 전에 실패하면 Task를 FAILED 처리하고 Attempt는 만들지 않습니다.
+Worker는 기본 60초 이상 PROCESSING 상태에 머문 Task를 먼저 복구한 뒤, 생성 시각과 ID 순서로 PENDING Task와 재시도 시각이 지난 RETRY_WAIT Task를 조회합니다. 각 Task를 PROCESSING으로 커밋한 뒤 Groupware HTTP 요청을 보냅니다. PROCESSING 시작 시각은 전용 `processing_started_at`에 저장합니다. HTTP 요청 중에는 DB 트랜잭션을 열지 않습니다. 결과까지 확인해 저장할 수 있었던 실제 HTTP 호출만 `IntegrationAttempt`로 기록하고 Attempt와 Task 결과를 같은 별도 트랜잭션에서 저장합니다. payload 해석이나 검증이 HTTP 전에 실패하면 Task를 FAILED 처리하고 Attempt는 만들지 않습니다.
 
-`retryCount`는 지금까지 시작된 자동 재시도 횟수입니다. 최초 호출은 0이며, RETRY_WAIT에서 PROCESSING으로 다시 넘어갈 때 1 증가합니다. 따라서 실제 호출 번호는 항상 `attemptNo = retryCount + 1`입니다. 연결 실패, timeout, HTTP 429·500·502·503·504는 각각 5초, 15초, 30초 대기 후 자동 재시도합니다. 네 번째 호출도 실패하면 FAILED가 됩니다. 그 외 4xx, 계약 또는 응답 해석 오류는 자동 재시도하지 않습니다. Worker는 다음 재시도 시각까지 대기하지 않고 다른 실행 가능한 Task를 처리합니다.
+`retryCount`는 자동 재실행 예산에 사용합니다. 최초 실행은 0이며 RETRY_WAIT 또는 stale PROCESSING에서 다시 PROCESSING으로 넘어갈 때 1 증가합니다. 정상 Retry에서는 저장된 Attempt 번호와 자연스럽게 대응하지만, PROCESSING 복구에서는 `attemptNo = retryCount + 1`을 강제하지 않습니다. Attempt 번호는 기존 저장 이력 중 가장 큰 번호 다음 값을 사용합니다. 중단 시점에 실제 HTTP 요청이 전송됐는지 알 수 없으므로 가짜 Attempt를 남기지 않습니다. 연결 실패, timeout, HTTP 429·500·502·503·504는 각각 5초, 15초, 30초 대기 후 자동 재시도합니다. 네 번째 자동 재실행이 끝난 작업은 FAILED가 됩니다. 그 외 4xx, 계약 또는 응답 해석 오류는 자동 재시도하지 않습니다. Worker는 다음 재시도 시각까지 대기하지 않고 다른 실행 가능한 Task를 처리합니다.
 
 Groupware API 계약은 `POST /mock/groupware/accounts`(신규 생성), `PUT /mock/groupware/accounts/{employeeNo}`(계정 생성 또는 활성 상태로 갱신), `PATCH /mock/groupware/accounts/{employeeNo}/disable`(비활성 상태 보장)입니다. POST는 기존 계정에 409를 반환하고, PUT은 계정이 없으면 새로 만듭니다. DISABLE은 이미 비활성인 계정과 없는 계정에 성공합니다. 계정 없음 응답은 HTTP 404와 `code=ACCOUNT_NOT_FOUND`를 반환하며, GroupwareClient는 DISABLE 요청의 이 정확한 오류 코드만 업무상 성공으로 처리합니다. 다른 404는 실패로 기록합니다. DTO는 `employee_no`, `name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. Task의 UUID 멱등 키는 `Idempotency-Key` 헤더로 전달되며 자동 재시도에서도 유지됩니다.
 
-Mock Groupware는 기본적으로 비활성화되어 있습니다. 앱 내부 Mock API를 사용하려면 `MOCK_GROUPWARE_ENABLED=true`로 설정합니다. 계정은 메모리에만 저장되므로 애플리케이션을 재시작하면 사라집니다.
+Mock Groupware는 기본적으로 비활성화되어 있습니다. 앱 내부 Mock API를 사용하려면 `MOCK_GROUPWARE_ENABLED=true`로 설정합니다. UUID 형식 `Idempotency-Key` 헤더는 필수입니다. 같은 키와 같은 요청에는 최초의 업무 성공 응답을 재사용하며 계정 업무를 반복하지 않습니다. 같은 키를 다른 Action이나 요청 본문에 쓰면 `409 IDEMPOTENCY_KEY_CONFLICT`를 반환합니다. 계정과 멱등 응답은 메모리에 저장되므로 애플리케이션을 재시작하면 모두 사라집니다. 실제 Groupware는 멱등 결과를 충분한 기간 동안 영속 보관해야 합니다.
 
-Task가 PROCESSING으로 커밋된 직후 애플리케이션이 종료되면 해당 Task는 PROCESSING에 남아 Worker가 다시 처리하지 않습니다. 외부 요청 성공 후 Attempt와 Task 결과 저장 전에 애플리케이션이 종료된 경우에도 결과는 PROCESSING으로 남을 수 있습니다. lease 및 복구는 Day 8 멱등성·복구 단계에서 다룹니다.
+`INTEGRATION_WORKER_RECOVERY_THRESHOLD`로 stale 기준을 바꿀 수 있으며 기본값은 60초입니다. PROCESSING 복구는 기존 최대 3회의 자동 재실행 예산에 포함됩니다. retryCount가 3인 stale Task는 추가 HTTP 호출 없이 `FAILED / PROCESSING_RECOVERY_EXHAUSTED`가 됩니다. 이 상태는 Groupware 업무 실패가 확인됐다는 뜻이 아니라 자동 처리 안에서 최종 결과를 확정할 수 없다는 뜻입니다. Mock 멱등 기록은 프로세스 재시작 뒤 사라지므로, 이 복구 시나리오는 Mock 상태를 유지한 채 Worker 프로세스 중단을 재현해야 검증할 수 있습니다. lease, 다중 Worker 경쟁 제어, 수동 재시도는 범위에 포함하지 않습니다.
 
 동기화 실행이 FAILED이면 실행 자체가 정상적으로 완료되지 못했다는 뜻입니다. 직원별 처리는 각각 커밋되므로 시스템 오류 전에 완료된 직원과 결과는 남을 수 있으며, FAILED가 전체 직원 처리를 원자적으로 롤백했다는 뜻은 아닙니다.
 

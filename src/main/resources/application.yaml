@@ -25,6 +25,7 @@ app:
       enabled: ${INTEGRATION_WORKER_ENABLED:false}
       fixed-delay: ${INTEGRATION_WORKER_FIXED_DELAY:3s}
       batch-size: ${INTEGRATION_WORKER_BATCH_SIZE:10}
+      recovery-threshold: ${INTEGRATION_WORKER_RECOVERY_THRESHOLD:60s}
   mock:
     hr:
       enabled: ${MOCK_HR_ENABLED:false}

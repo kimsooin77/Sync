@@ -40,6 +40,13 @@ public class IntegrationWorker {
 
     @Transactional(propagation = Propagation.NEVER)
     public int runBatch() {
+        Instant now = clock.instant();
+        Instant recoveryCutoff = now.minus(properties.recoveryThreshold());
+        List<Long> staleTaskIds = transactionService.findStaleProcessingIds(properties.batchSize(), recoveryCutoff);
+        for (Long taskId : staleTaskIds) {
+            transactionService.recoverStaleProcessing(taskId, recoveryCutoff, now);
+        }
+
         List<Long> taskIds = transactionService.findEligibleIds(properties.batchSize(), clock.instant());
         int processed = 0;
         for (Long taskId : taskIds) {
@@ -80,7 +87,7 @@ public class IntegrationWorker {
         Instant finishedAt = clock.instant();
 
         if (failure == null) {
-            transactionService.recordSucceeded(task.id(), task.retryCount() + 1, startedAt, finishedAt,
+            transactionService.recordSucceeded(task.id(), startedAt, finishedAt,
                     result.httpStatus());
             return;
         }
@@ -89,7 +96,7 @@ public class IntegrationWorker {
         Instant retryAt = retryPolicy.isRetryable(failure)
                 ? retryPolicy.nextRetryAt(task.retryCount(), task.maxRetryCount(), finishedAt).orElse(null)
                 : null;
-        transactionService.recordFailed(task.id(), task.retryCount() + 1, startedAt, finishedAt,
+        transactionService.recordFailed(task.id(), startedAt, finishedAt,
                 failure.getHttpStatus(), failure.getErrorCode(), safeMessage, retryAt);
     }
 

@@ -43,4 +43,21 @@ public interface IntegrationTaskRepository extends JpaRepository<IntegrationTask
             @Param("id") Long id,
             @Param("processing") IntegrationTaskStatus processing
     );
+
+    @Query("select task.id from IntegrationTask task where task.status = :processing "
+            + "and task.processingStartedAt <= :cutoff order by task.processingStartedAt asc, task.id asc")
+    List<Long> findStaleProcessingIds(
+            @Param("processing") IntegrationTaskStatus processing,
+            @Param("cutoff") Instant cutoff,
+            Pageable pageable
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select task from IntegrationTask task where task.id = :id and task.status = :processing "
+            + "and task.processingStartedAt <= :cutoff")
+    Optional<IntegrationTask> findStaleProcessingByIdForUpdate(
+            @Param("id") Long id,
+            @Param("processing") IntegrationTaskStatus processing,
+            @Param("cutoff") Instant cutoff
+    );
 }

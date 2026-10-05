@@ -5,12 +5,19 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class GroupwareStubServer {
 
@@ -24,14 +31,20 @@ final class GroupwareStubServer {
             new ConcurrentHashMap<>();
     private volatile CountDownLatch requestEntered;
     private volatile CountDownLatch releaseRequest;
+    private volatile String forwardTarget;
+    private final AtomicBoolean delayNextForwardedResponse = new AtomicBoolean();
+    private final HttpClient proxyClient = HttpClient.newHttpClient();
+    private final ExecutorService serverExecutor = Executors.newCachedThreadPool();
     private final HttpServer server;
 
     private GroupwareStubServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.setExecutor(serverExecutor);
         server.createContext("/mock/groupware/accounts", exchange -> {
             try {
+                byte[] requestBody = exchange.getRequestBody().readAllBytes();
                 GroupwareAccountRequest request = JsonMapper.builder().build()
-                        .readValue(exchange.getRequestBody(), GroupwareAccountRequest.class);
+                        .readValue(requestBody, GroupwareAccountRequest.class);
                 requests.computeIfAbsent(request.employeeNo(), ignored -> new CopyOnWriteArrayList<>()).add(request);
                 idempotencyKeys.computeIfAbsent(request.employeeNo(), ignored -> new CopyOnWriteArrayList<>())
                         .add(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
@@ -41,6 +54,11 @@ final class GroupwareStubServer {
                 if (entered != null && release != null) {
                     entered.countDown();
                     release.await(10, TimeUnit.SECONDS);
+                }
+                String target = forwardTarget;
+                if (target != null) {
+                    forward(exchange, target, requestBody);
+                    return;
                 }
                 if (failingEmployeeNos.contains(request.employeeNo())) {
                     byte[] response = "internal Groupware details".getBytes(StandardCharsets.UTF_8);
@@ -130,6 +148,8 @@ final class GroupwareStubServer {
         unrelatedNotFoundEmployeeNos.clear();
         requests.clear();
         idempotencyKeys.clear();
+        forwardTarget = null;
+        delayNextForwardedResponse.set(false);
         if (releaseRequest != null) {
             releaseRequest.countDown();
         }
@@ -148,6 +168,14 @@ final class GroupwareStubServer {
 
     void returnUnrelatedNotFoundFor(String employeeNo) {
         unrelatedNotFoundEmployeeNos.add(employeeNo);
+    }
+
+    void forwardTo(String baseUrl) {
+        forwardTarget = baseUrl;
+    }
+
+    void delayNextForwardedResponse() {
+        delayNextForwardedResponse.set(true);
     }
 
     void blockNextRequest() {
@@ -175,7 +203,35 @@ final class GroupwareStubServer {
         exchange.getResponseBody().write(response);
     }
 
+    private void forward(com.sun.net.httpserver.HttpExchange exchange, String target, byte[] body) throws Exception {
+        URI uri = URI.create(target + exchange.getRequestURI());
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
+                .method(exchange.getRequestMethod(), HttpRequest.BodyPublishers.ofByteArray(body));
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        String idempotencyKey = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+        if (contentType != null) {
+            requestBuilder.header("Content-Type", contentType);
+        }
+        if (idempotencyKey != null) {
+            requestBuilder.header("Idempotency-Key", idempotencyKey);
+        }
+        HttpResponse<byte[]> response = proxyClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofByteArray());
+        if (delayNextForwardedResponse.compareAndSet(true, false)) {
+            Thread.sleep(750);
+        }
+        String responseContentType = response.headers().firstValue("Content-Type").orElse(null);
+        if (responseContentType != null) {
+            exchange.getResponseHeaders().set("Content-Type", responseContentType);
+        }
+        byte[] responseBody = response.body();
+        exchange.sendResponseHeaders(response.statusCode(), responseBody.length == 0 ? -1 : responseBody.length);
+        if (responseBody.length > 0) {
+            exchange.getResponseBody().write(responseBody);
+        }
+    }
+
     void close() {
         server.stop(0);
+        serverExecutor.shutdownNow();
     }
 }

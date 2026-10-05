@@ -39,6 +39,33 @@ public class IntegrationTaskTransactionService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<Long> findStaleProcessingIds(int batchSize, Instant cutoff) {
+        if (batchSize < 1) {
+            throw new IllegalArgumentException("batchSize must be positive");
+        }
+        Objects.requireNonNull(cutoff, "cutoff");
+        return integrationTaskRepository.findStaleProcessingIds(IntegrationTaskStatus.PROCESSING, cutoff,
+                        PageRequest.of(0, batchSize));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recoverStaleProcessing(Long taskId, Instant cutoff, Instant now) {
+        Objects.requireNonNull(taskId, "taskId");
+        Objects.requireNonNull(cutoff, "cutoff");
+        Objects.requireNonNull(now, "now");
+        integrationTaskRepository.findStaleProcessingByIdForUpdate(taskId, IntegrationTaskStatus.PROCESSING,
+                        cutoff)
+                .ifPresent(task -> {
+                    if (task.getRetryCount() >= task.getMaxRetryCount()) {
+                        task.failRecoveryExhausted();
+                    } else {
+                        task.recoverToRetryWait(now);
+                    }
+                    integrationTaskRepository.flush();
+                });
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<IntegrationTaskCommand> markProcessing(Long taskId, Instant now) {
         Objects.requireNonNull(taskId, "taskId");
@@ -62,10 +89,10 @@ public class IntegrationTaskTransactionService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void recordSucceeded(Long taskId, int attemptNo, Instant startedAt, Instant finishedAt, int httpStatus) {
+    public void recordSucceeded(Long taskId, Instant startedAt, Instant finishedAt, int httpStatus) {
         IntegrationTask task = processingTask(taskId);
-        integrationAttemptRepository.saveAndFlush(IntegrationAttempt.succeeded(
-                task, attemptNo, startedAt, finishedAt, httpStatus));
+        integrationAttemptRepository.saveAndFlush(IntegrationAttempt.succeeded(task, nextAttemptNo(task),
+                startedAt, finishedAt, httpStatus));
         task.markSucceeded();
         integrationTaskRepository.flush();
     }
@@ -73,7 +100,6 @@ public class IntegrationTaskTransactionService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordFailed(
             Long taskId,
-            int attemptNo,
             Instant startedAt,
             Instant finishedAt,
             Integer httpStatus,
@@ -83,7 +109,7 @@ public class IntegrationTaskTransactionService {
     ) {
         IntegrationTask task = processingTask(taskId);
         integrationAttemptRepository.saveAndFlush(IntegrationAttempt.failed(
-                task, attemptNo, startedAt, finishedAt, httpStatus, errorCode, safeErrorMessage));
+                task, nextAttemptNo(task), startedAt, finishedAt, httpStatus, errorCode, safeErrorMessage));
         if (retryAt != null) {
             task.markRetryWait(errorCode, safeErrorMessage, retryAt);
         } else {
@@ -96,5 +122,10 @@ public class IntegrationTaskTransactionService {
         Objects.requireNonNull(taskId, "taskId");
         return integrationTaskRepository.findProcessingByIdForUpdate(taskId, IntegrationTaskStatus.PROCESSING)
                 .orElseThrow(() -> new IllegalStateException("integration task is not processing"));
+    }
+
+    private int nextAttemptNo(IntegrationTask task) {
+        Integer maximumAttemptNo = integrationAttemptRepository.findMaximumAttemptNo(task.getId());
+        return maximumAttemptNo == null ? 1 : maximumAttemptNo + 1;
     }
 }

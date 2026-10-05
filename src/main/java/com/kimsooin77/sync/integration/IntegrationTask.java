@@ -18,6 +18,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -67,6 +68,9 @@ public class IntegrationTask {
 
     @Column(name = "next_retry_at")
     private Instant nextRetryAt;
+
+    @Column(name = "processing_started_at")
+    private Instant processingStartedAt;
 
     @Column(name = "last_error_code", columnDefinition = "text")
     private String lastErrorCode;
@@ -158,6 +162,10 @@ public class IntegrationTask {
         return nextRetryAt;
     }
 
+    public Instant getProcessingStartedAt() {
+        return processingStartedAt;
+    }
+
     public String getLastErrorCode() {
         return lastErrorCode;
     }
@@ -186,6 +194,7 @@ public class IntegrationTask {
         }
         status = IntegrationTaskStatus.PROCESSING;
         nextRetryAt = null;
+        processingStartedAt = now;
     }
 
     public void markSucceeded() {
@@ -194,6 +203,7 @@ public class IntegrationTask {
         }
         status = IntegrationTaskStatus.SUCCESS;
         nextRetryAt = null;
+        processingStartedAt = null;
         lastErrorCode = null;
         lastErrorMessage = null;
     }
@@ -209,6 +219,7 @@ public class IntegrationTask {
         lastErrorCode = Objects.requireNonNull(errorCode, "errorCode");
         lastErrorMessage = Objects.requireNonNull(errorMessage, "errorMessage");
         nextRetryAt = Objects.requireNonNull(retryAt, "retryAt");
+        processingStartedAt = null;
     }
 
     public void markFailed(String errorCode, String errorMessage) {
@@ -219,5 +230,33 @@ public class IntegrationTask {
         lastErrorCode = Objects.requireNonNull(errorCode, "errorCode");
         lastErrorMessage = Objects.requireNonNull(errorMessage, "errorMessage");
         nextRetryAt = null;
+        processingStartedAt = null;
+    }
+
+    public void recoverToRetryWait(Instant now) {
+        Objects.requireNonNull(now, "now");
+        if (status != IntegrationTaskStatus.PROCESSING) {
+            throw new IllegalStateException("only processing integration tasks can be recovered");
+        }
+        if (retryCount >= maxRetryCount) {
+            throw new IllegalStateException("integration task has exhausted automatic retries");
+        }
+        status = IntegrationTaskStatus.RETRY_WAIT;
+        // PostgreSQL TIMESTAMPTZ stores microseconds; truncate so the due time never rounds into the future.
+        nextRetryAt = now.truncatedTo(ChronoUnit.MICROS);
+        processingStartedAt = null;
+        lastErrorCode = "PROCESSING_INTERRUPTED";
+        lastErrorMessage = "Processing was interrupted and will be retried";
+    }
+
+    public void failRecoveryExhausted() {
+        if (status != IntegrationTaskStatus.PROCESSING) {
+            throw new IllegalStateException("only processing integration tasks can fail recovery");
+        }
+        status = IntegrationTaskStatus.FAILED;
+        nextRetryAt = null;
+        processingStartedAt = null;
+        lastErrorCode = "PROCESSING_RECOVERY_EXHAUSTED";
+        lastErrorMessage = "Automatic processing ended before the external result could be confirmed";
     }
 }
