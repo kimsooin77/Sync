@@ -8,6 +8,10 @@ import com.kimsooin77.sync.sync.EmployeeSyncService;
 import com.kimsooin77.sync.sync.HrEmployeeResponse;
 import com.kimsooin77.sync.sync.SyncItemRepository;
 import com.kimsooin77.sync.sync.SyncJobRepository;
+import com.kimsooin77.sync.simulation.groupware.MockGroupwareAccountStore;
+import com.kimsooin77.sync.simulation.groupware.FailureSimulationRequest;
+import com.kimsooin77.sync.simulation.groupware.FailureMode;
+import com.kimsooin77.sync.api.integration.IntegrationTaskRetryResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +42,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "app.integration.worker.enabled=false",
-                "app.mock.groupware.enabled=true"
+                "app.mock.groupware.enabled=true",
+                "app.mock.groupware.timeout-delay-ms=600"
         })
 @Import({PostgreSqlTestConfiguration.class, IntegrationWorkerTestConfiguration.class})
 class IntegrationWorkerIntegrationTest {
@@ -80,6 +85,9 @@ class IntegrationWorkerIntegrationTest {
 
     @Autowired
     private IntegrationTaskTransactionService transactionService;
+
+    @Autowired
+    private GroupwareClient groupwareClient;
 
     @Autowired
     private MutableClock clock;
@@ -254,6 +262,283 @@ class IntegrationWorkerIntegrationTest {
         assertThat(replay.getStatusCode().value()).isEqualTo(404);
         assertThat(replay.getResponseBodyAsString()).isEqualTo(first.getResponseBodyAsString())
                 .contains("ACCOUNT_NOT_FOUND");
+    }
+
+    @Test
+    void failOnceBindsKeyToFirstRequestAndSuccessReplayPrecedesCurrentFailureMode() {
+        RestClient client = localClient();
+        GroupwareAccountRequest original = new GroupwareAccountRequest("E9030", "Bound", null, null, "ACTIVE");
+        java.util.UUID key = java.util.UUID.randomUUID();
+        client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9030")
+                .body(new FailureSimulationRequest(FailureMode.FAIL_ONCE_THEN_SUCCESS, null))
+                .retrieve().toBodilessEntity();
+
+        assertThatThrownBy(() -> client.post().uri("/mock/groupware/accounts")
+                .header("Idempotency-Key", key.toString()).body(original).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                        assertThat(failure.getStatusCode().value()).isEqualTo(500));
+
+        assertThatThrownBy(() -> client.post().uri("/mock/groupware/accounts")
+                .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
+                .body(original).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                        assertThat(failure.getStatusCode().value()).isEqualTo(500));
+
+        client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9030")
+                .body(new FailureSimulationRequest(FailureMode.HTTP_500, null)).retrieve().toBodilessEntity();
+
+        assertThatThrownBy(() -> client.post().uri("/mock/groupware/accounts")
+                .header("Idempotency-Key", key.toString())
+                .body(new GroupwareAccountRequest("E9031", "Changed", null, null, "ACTIVE"))
+                .retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure -> {
+                    assertThat(failure.getStatusCode().value()).isEqualTo(409);
+                    assertThat(failure.getResponseBodyAsString()).contains("IDEMPOTENCY_KEY_CONFLICT");
+                });
+
+        client.delete().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9030")
+                .retrieve().toBodilessEntity();
+        client.post().uri("/mock/groupware/accounts").header("Idempotency-Key", key.toString())
+                .body(original).retrieve().toBodilessEntity();
+        client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9030")
+                .body(new FailureSimulationRequest(FailureMode.HTTP_500, null)).retrieve().toBodilessEntity();
+        var replay = client.post().uri("/mock/groupware/accounts").header("Idempotency-Key", key.toString())
+                .body(original).retrieve().toBodilessEntity();
+
+        assertThat(replay.getStatusCode().value()).isEqualTo(201);
+        assertThat(accountStore.find("E9030")).isNotNull();
+    }
+
+    @Test
+    void concurrentRequestsWithOneKeyExecuteMockBusinessOperationOnce() throws Exception {
+        RestClient client = localClient();
+        java.util.UUID key = java.util.UUID.randomUUID();
+        GroupwareAccountRequest request = new GroupwareAccountRequest("E9038", "Concurrent", null, null, "ACTIVE");
+        CompletableFuture<Integer> first = CompletableFuture.supplyAsync(() -> client.post()
+                .uri("/mock/groupware/accounts").header("Idempotency-Key", key.toString()).body(request)
+                .retrieve().toBodilessEntity().getStatusCode().value());
+        CompletableFuture<Integer> second = CompletableFuture.supplyAsync(() -> client.post()
+                .uri("/mock/groupware/accounts").header("Idempotency-Key", key.toString()).body(request)
+                .retrieve().toBodilessEntity().getStatusCode().value());
+
+        assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(201);
+        assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(201);
+        assertThat(accountStore.find("E9038")).isNotNull();
+    }
+
+    @Test
+    void failureSimulationApiValidatesRulesAndSupportsOverrides() {
+        RestClient client = localClient();
+        client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "e9032")
+                .body(new FailureSimulationRequest(FailureMode.DELAY, 50L)).retrieve().toBodilessEntity();
+        assertThat(client.get().uri("/mock/groupware/failure-simulation").retrieve().body(String.class))
+                .contains("E9032", "DELAY", "50");
+
+        assertThatThrownBy(() -> client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9032")
+                .body(new FailureSimulationRequest(FailureMode.NORMAL, 5L)).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                        assertThat(failure.getStatusCode().value()).isEqualTo(400));
+        assertThatThrownBy(() -> client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9032")
+                .body(new FailureSimulationRequest(FailureMode.DELAY, 30_001L)).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                        assertThat(failure.getStatusCode().value()).isEqualTo(400));
+        assertThat(client.delete().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9032")
+                .retrieve().toBodilessEntity().getStatusCode().value()).isEqualTo(204);
+    }
+
+    @Test
+    void failureModesAreIsolatedByEmployeeAndWorkerContinuesAfterFailures() {
+        employeeSyncService.synchronize(List.of(
+                hr("E9035", "Simulated failure", null, null, "ACTIVE"),
+                hr("E9036", "Healthy employee", null, null, "ACTIVE")));
+        List<IntegrationTask> tasks = integrationTaskRepository.findAll().stream()
+                .sorted(java.util.Comparator.comparing(IntegrationTask::getId)).toList();
+        RestClient client = localClient();
+        client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9035")
+                .body(new FailureSimulationRequest(FailureMode.HTTP_500, null)).retrieve().toBodilessEntity();
+        GROUPWARE_STUB.forwardTo("http://localhost:" + port);
+
+        assertThat(integrationWorker.runBatch()).isEqualTo(2);
+        assertThat(integrationTaskRepository.findById(tasks.get(0).getId()).orElseThrow().getStatus())
+                .isEqualTo(IntegrationTaskStatus.RETRY_WAIT);
+        assertThat(integrationTaskRepository.findById(tasks.get(1).getId()).orElseThrow().getStatus())
+                .isEqualTo(IntegrationTaskStatus.SUCCESS);
+        assertThat(accountStore.find("E9035")).isNull();
+        assertThat(accountStore.find("E9036")).isNotNull();
+
+        client.put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9035")
+                .body(new FailureSimulationRequest(FailureMode.DELAY, 20L)).retrieve().toBodilessEntity();
+        clock.advanceSeconds(5);
+        clock.advanceMillis(1);
+        assertThat(integrationWorker.runBatch()).isOne();
+        assertThat(integrationTaskRepository.findById(tasks.get(0).getId()).orElseThrow().getStatus())
+                .isEqualTo(IntegrationTaskStatus.SUCCESS);
+        assertThat(accountStore.find("E9035")).isNotNull();
+    }
+
+    @Test
+    void timeoutFailureModeDoesNotRunGroupwareAccountOperation() {
+        employeeSyncService.synchronize(List.of(hr("E9037", "Timeout", null, null, "ACTIVE")));
+        IntegrationTask task = integrationTaskRepository.findAll().getFirst();
+        localClient().put().uri("/mock/groupware/failure-simulation/{employeeNo}", "E9037")
+                .body(new FailureSimulationRequest(FailureMode.TIMEOUT, null)).retrieve().toBodilessEntity();
+        GROUPWARE_STUB.forwardTo("http://localhost:" + port);
+
+        assertThat(integrationWorker.runBatch()).isOne();
+        IntegrationTask waiting = integrationTaskRepository.findById(task.getId()).orElseThrow();
+        assertThat(waiting.getStatus()).isEqualTo(IntegrationTaskStatus.RETRY_WAIT);
+        assertThat(waiting.getLastErrorCode()).isEqualTo("GROUPWARE_TIMEOUT");
+        assertThat(accountStore.find("E9037")).isNull();
+        assertThat(integrationAttemptRepository.findAllByIntegrationTask_IdOrderByAttemptNoAsc(task.getId()))
+                .singleElement().satisfies(attempt ->
+                        assertThat(attempt.getHttpStatus()).isNull());
+    }
+
+    @Test
+    void manualRetryResetsOnlyRetryStateAndKeepsPayloadKeyAndAttempts() {
+        employeeSyncService.synchronize(List.of(hr("E9033", "Manual retry", null, null, "ACTIVE")));
+        IntegrationTask task = integrationTaskRepository.findAll().getFirst();
+        GROUPWARE_STUB.failWithStatus("E9033", 400);
+        assertThat(integrationWorker.runBatch()).isOne();
+        IntegrationTask failed = integrationTaskRepository.findById(task.getId()).orElseThrow();
+        var firstAttempt = integrationAttemptRepository.findAllByIntegrationTask_IdOrderByAttemptNoAsc(task.getId());
+        assertThat(failed.getStatus()).isEqualTo(IntegrationTaskStatus.FAILED);
+
+        IntegrationTaskRetryResponse response = localClient().post()
+                .uri("/api/integration-tasks/{id}/retry", task.getId()).retrieve()
+                .body(IntegrationTaskRetryResponse.class);
+        assertThat(response).isNotNull();
+        assertThat(response.status()).isEqualTo(IntegrationTaskStatus.PENDING);
+        IntegrationTask pending = integrationTaskRepository.findById(task.getId()).orElseThrow();
+        assertThat(pending.getRetryCount()).isZero();
+        assertThat(pending.getPayload()).isEqualTo(task.getPayload());
+        assertThat(pending.getIdempotencyKey()).isEqualTo(task.getIdempotencyKey());
+        assertThat(integrationAttemptRepository.findAllByIntegrationTask_IdOrderByAttemptNoAsc(task.getId()))
+                .hasSize(firstAttempt.size());
+
+        GROUPWARE_STUB.clearFailures();
+        assertThat(integrationWorker.runBatch()).isOne();
+        assertThat(integrationTaskRepository.findById(task.getId()).orElseThrow().getStatus())
+                .isEqualTo(IntegrationTaskStatus.SUCCESS);
+        assertThat(integrationAttemptRepository.findAllByIntegrationTask_IdOrderByAttemptNoAsc(task.getId()))
+                .extracting(IntegrationAttempt::getAttemptNo).containsExactly(1, 2);
+    }
+
+    @Test
+    void manualRetryRejectsMissingTaskNonFailedTaskAndDisallowedError() {
+        RestClient client = localClient();
+        assertThatThrownBy(() -> client.post().uri("/api/integration-tasks/999999/retry")
+                .retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                        assertThat(failure.getStatusCode().value()).isEqualTo(404));
+
+        employeeSyncService.synchronize(List.of(hr("E9034", "Not failed", null, null, "ACTIVE")));
+        IntegrationTask pending = integrationTaskRepository.findAll().getFirst();
+        assertThatThrownBy(() -> client.post().uri("/api/integration-tasks/{id}/retry", pending.getId())
+                .retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure -> {
+                    assertThat(failure.getStatusCode().value()).isEqualTo(409);
+                    assertThat(failure.getResponseBodyAsString()).contains("TASK_NOT_FAILED");
+                });
+
+        transactionService.markProcessing(pending.getId(), clock.instant()).orElseThrow();
+        transactionService.markPayloadFailed(pending.getId(), "TASK_PAYLOAD_INVALID", "invalid payload");
+        assertThatThrownBy(() -> client.post().uri("/api/integration-tasks/{id}/retry", pending.getId())
+                .retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure -> {
+                    assertThat(failure.getStatusCode().value()).isEqualTo(409);
+                    assertThat(failure.getResponseBodyAsString()).contains("TASK_RETRY_NOT_ALLOWED");
+                });
+
+        employeeSyncService.synchronize(List.of(hr("E9039", "Conflict is not retryable", null, null, "ACTIVE")));
+        IntegrationTask conflictTask = integrationTaskRepository.findAll().stream()
+                .filter(task -> task.getEmployeeId().equals(employeeRepository.findByEmployeeNo("E9039")
+                        .orElseThrow().getId())).findFirst().orElseThrow();
+        transactionService.markProcessing(conflictTask.getId(), clock.instant()).orElseThrow();
+        transactionService.markPayloadFailed(conflictTask.getId(), "IDEMPOTENCY_KEY_CONFLICT", "key conflict");
+        assertThatThrownBy(() -> client.post().uri("/api/integration-tasks/{id}/retry", conflictTask.getId())
+                .retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                        assertThat(failure.getResponseBodyAsString()).contains("TASK_RETRY_NOT_ALLOWED"));
+    }
+
+    @Test
+    void simultaneousManualRetryRequestsApproveOnlyOneAndDoNotCallGroupware() throws Exception {
+        employeeSyncService.synchronize(List.of(hr("E9040", "Concurrent retry", null, null, "ACTIVE")));
+        IntegrationTask task = integrationTaskRepository.findAll().getFirst();
+        transactionService.markProcessing(task.getId(), clock.instant()).orElseThrow();
+        transactionService.markPayloadFailed(task.getId(), "GROUPWARE_HTTP_ERROR", "safe error");
+        CompletableFuture<Integer> first = retryStatus(task.getId());
+        CompletableFuture<Integer> second = retryStatus(task.getId());
+
+        assertThat(List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS)))
+                .containsExactlyInAnyOrder(200, 409);
+        assertThat(integrationTaskRepository.findById(task.getId()).orElseThrow().getStatus())
+                .isEqualTo(IntegrationTaskStatus.PENDING);
+        assertThat(GROUPWARE_STUB.requestsFor("E9040")).isEmpty();
+    }
+
+    @Test
+    void retryApiDatabaseFailureRollsBackTheStateChange() {
+        employeeSyncService.synchronize(List.of(hr("E9041", "Retry rollback", null, null, "ACTIVE")));
+        IntegrationTask task = integrationTaskRepository.findAll().getFirst();
+        transactionService.markProcessing(task.getId(), clock.instant()).orElseThrow();
+        transactionService.markPayloadFailed(task.getId(), "GROUPWARE_HTTP_ERROR", "safe error");
+        String constraintName = "ck_test_integration_task_reject_pending";
+        jdbcTemplate.execute("alter table integration_task add constraint " + constraintName
+                + " check (status <> 'PENDING')");
+        try {
+            assertThatThrownBy(() -> localClient().post()
+                    .uri("/api/integration-tasks/{id}/retry", task.getId()).retrieve().toBodilessEntity())
+                    .isInstanceOfSatisfying(RestClientResponseException.class, failure ->
+                            assertThat(failure.getStatusCode().value()).isEqualTo(500));
+            IntegrationTask stillFailed = integrationTaskRepository.findById(task.getId()).orElseThrow();
+            assertThat(stillFailed.getStatus()).isEqualTo(IntegrationTaskStatus.FAILED);
+            assertThat(stillFailed.getLastErrorCode()).isEqualTo("GROUPWARE_HTTP_ERROR");
+        } finally {
+            jdbcTemplate.execute("alter table integration_task drop constraint " + constraintName);
+        }
+    }
+
+    @Test
+    void groupwareClientClassifiesOnlyTheStableIdempotencyConflictCode() {
+        GROUPWARE_STUB.forwardTo("http://localhost:" + port);
+        java.util.UUID key = java.util.UUID.randomUUID();
+        GroupwareAccountRequest original = new GroupwareAccountRequest("E9042", "Original", null, null, "ACTIVE");
+        groupwareClient.send(IntegrationAction.CREATE_ACCOUNT, original, key);
+
+        assertThatThrownBy(() -> groupwareClient.send(IntegrationAction.CREATE_ACCOUNT,
+                new GroupwareAccountRequest("E9042", "Different", null, null, "ACTIVE"), key))
+                .isInstanceOfSatisfying(GroupwareClientException.class, failure ->
+                        assertThat(failure.getErrorCode()).isEqualTo("IDEMPOTENCY_KEY_CONFLICT"));
+    }
+
+    @Test
+    void idempotencyConflictFailsWithoutAutomaticRetryAndCannotBeRetriedManually() {
+        employeeSyncService.synchronize(List.of(hr("E9043", "Expected payload", null, null, "ACTIVE")));
+        IntegrationTask task = integrationTaskRepository.findAll().getFirst();
+        GROUPWARE_STUB.forwardTo("http://localhost:" + port);
+        localClient().post().uri("/mock/groupware/accounts")
+                .header("Idempotency-Key", task.getIdempotencyKey().toString())
+                .body(new GroupwareAccountRequest("E9043", "Different payload", null, null, "ACTIVE"))
+                .retrieve().toBodilessEntity();
+
+        assertThat(integrationWorker.runBatch()).isOne();
+        IntegrationTask failed = integrationTaskRepository.findById(task.getId()).orElseThrow();
+        assertThat(failed.getStatus()).isEqualTo(IntegrationTaskStatus.FAILED);
+        assertThat(failed.getLastErrorCode()).isEqualTo("IDEMPOTENCY_KEY_CONFLICT");
+        assertThat(failed.getRetryCount()).isZero();
+        assertThat(integrationAttemptRepository.findAllByIntegrationTask_IdOrderByAttemptNoAsc(task.getId()))
+                .singleElement().satisfies(attempt -> {
+                    assertThat(attempt.getHttpStatus()).isEqualTo(409);
+                    assertThat(attempt.getResult()).isEqualTo(IntegrationAttemptResult.FAILED);
+                });
+        assertThatThrownBy(() -> localClient().post()
+                .uri("/api/integration-tasks/{id}/retry", task.getId()).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure -> {
+                    assertThat(failure.getStatusCode().value()).isEqualTo(409);
+                    assertThat(failure.getResponseBodyAsString()).contains("TASK_RETRY_NOT_ALLOWED");
+                });
     }
 
     @Test
@@ -657,6 +942,17 @@ class IntegrationWorkerIntegrationTest {
 
     private RestClient localClient() {
         return RestClient.builder().baseUrl("http://localhost:" + port).build();
+    }
+
+    private CompletableFuture<Integer> retryStatus(Long taskId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return localClient().post().uri("/api/integration-tasks/{id}/retry", taskId)
+                        .retrieve().toBodilessEntity().getStatusCode().value();
+            } catch (RestClientResponseException expectedConflict) {
+                return expectedConflict.getStatusCode().value();
+            }
+        });
     }
 
     private static void assertInstantClose(Instant actual, Instant expected) {

@@ -32,3 +32,7 @@ app:
       scenario: ${MOCK_HR_SCENARIO:initial}
     groupware:
       enabled: ${MOCK_GROUPWARE_ENABLED:false}
+      default-failure-mode: ${MOCK_GROUPWARE_DEFAULT_FAILURE_MODE:NORMAL}
+      default-delay-ms: ${MOCK_GROUPWARE_DEFAULT_DELAY_MS:1000}
+      timeout-delay-ms: ${MOCK_GROUPWARE_TIMEOUT_DELAY_MS:6000}
+      max-delay-ms: ${MOCK_GROUPWARE_MAX_DELAY_MS:30000}

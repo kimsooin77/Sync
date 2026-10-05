@@ -60,7 +60,7 @@ $env:HR_BASE_URL = 'http://localhost:8080'
 
 ## 현재 범위
 
-직원 엔티티와 저장소, V1~V6 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker, 자동 재시도, 외부 호출 Attempt 이력, Mock Groupware 멱등 처리와 오래된 PROCESSING Task 복구를 포함합니다. 수동 재시도는 아직 구현하지 않았습니다.
+직원 엔티티와 저장소, V1~V6 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker, 자동 재시도, 외부 호출 Attempt 이력, Mock Groupware 멱등 처리와 오래된 PROCESSING Task 복구, 직원별 장애 시뮬레이션, FAILED Task 수동 재시도를 포함합니다.
 
 ## 직원 스냅샷 규칙
 
@@ -93,6 +93,32 @@ Worker는 기본 60초 이상 PROCESSING 상태에 머문 Task를 먼저 복구�
 Groupware API 계약은 `POST /mock/groupware/accounts`(신규 생성), `PUT /mock/groupware/accounts/{employeeNo}`(계정 생성 또는 활성 상태로 갱신), `PATCH /mock/groupware/accounts/{employeeNo}/disable`(비활성 상태 보장)입니다. POST는 기존 계정에 409를 반환하고, PUT은 계정이 없으면 새로 만듭니다. DISABLE은 이미 비활성인 계정과 없는 계정에 성공합니다. 계정 없음 응답은 HTTP 404와 `code=ACCOUNT_NOT_FOUND`를 반환하며, GroupwareClient는 DISABLE 요청의 이 정확한 오류 코드만 업무상 성공으로 처리합니다. 다른 404는 실패로 기록합니다. DTO는 `employee_no`, `name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. Task의 UUID 멱등 키는 `Idempotency-Key` 헤더로 전달되며 자동 재시도에서도 유지됩니다.
 
 Mock Groupware는 기본적으로 비활성화되어 있습니다. 앱 내부 Mock API를 사용하려면 `MOCK_GROUPWARE_ENABLED=true`로 설정합니다. UUID 형식 `Idempotency-Key` 헤더는 필수입니다. 같은 키와 같은 요청에는 최초의 업무 성공 응답을 재사용하며 계정 업무를 반복하지 않습니다. 같은 키를 다른 Action이나 요청 본문에 쓰면 `409 IDEMPOTENCY_KEY_CONFLICT`를 반환합니다. 계정과 멱등 응답은 메모리에 저장되므로 애플리케이션을 재시작하면 모두 사라집니다. 실제 Groupware는 멱등 결과를 충분한 기간 동안 영속 보관해야 합니다.
+
+### Mock Groupware 장애 시뮬레이션
+
+Mock Groupware가 활성화된 경우 다음 API로 기본 설정과 직원별 장애 규칙을 조회·변경할 수 있습니다.
+
+```text
+GET    /mock/groupware/failure-simulation
+PUT    /mock/groupware/failure-simulation/{employeeNo}
+DELETE /mock/groupware/failure-simulation/{employeeNo}
+```
+
+PUT 본문은 다음과 같습니다.
+
+```json
+{"mode":"FAIL_ONCE_THEN_SUCCESS"}
+```
+
+지원 모드는 `NORMAL`, `DELAY`, `TIMEOUT`, `HTTP_500`, `FAIL_ONCE_THEN_SUCCESS`입니다. `DELAY`는 `{"mode":"DELAY","delayMs":1000}`처럼 설정합니다. DELAY가 아닌 모드에 `delayMs`를 주거나 설정 가능한 상한(기본 30초)을 넘으면 400을 반환합니다. 기본 규칙은 `MOCK_GROUPWARE_DEFAULT_FAILURE_MODE`, `MOCK_GROUPWARE_DEFAULT_DELAY_MS`, `MOCK_GROUPWARE_TIMEOUT_DELAY_MS`, `MOCK_GROUPWARE_MAX_DELAY_MS`로 설정합니다. 직원 사번은 앞뒤 공백을 제거하고 대문자로 표준화합니다.
+
+멱등 key별로 최초 요청의 Action, 사번, 본문 fingerprint를 기억합니다. HTTP 성공 응답이 저장된 key는 현재 장애 규칙보다 먼저 재생합니다. 동일 key가 다른 요청에 쓰이면 성공 여부와 무관하게 `409 IDEMPOTENCY_KEY_CONFLICT`를 반환합니다. `FAIL_ONCE_THEN_SUCCESS`의 최초 500도 key와 요청의 연결 및 실패 소진 상태를 보존합니다. 따라서 동일 요청은 다음 호출에서 업무를 실행할 수 있고 다른 요청은 충돌합니다. 직원별 규칙을 바꾸거나 삭제해도 key 상태는 초기화되지 않습니다. 이 상태와 성공 응답은 인메모리이며 애플리케이션 재시작 시 사라집니다.
+
+### FAILED 작업 수동 재시도
+
+`POST /api/integration-tasks/{id}/retry`는 FAILED 작업만 `PENDING`으로 되돌립니다. Groupware를 호출하지 않으며 Worker가 다음 처리 주기에 작업을 수행합니다. `GROUPWARE_HTTP_ERROR`, `GROUPWARE_CONNECTION_ERROR`, `GROUPWARE_TIMEOUT`, `GROUPWARE_RESPONSE_INVALID`, `PROCESSING_RECOVERY_EXHAUSTED`만 재시도할 수 있습니다. 나머지 오류 코드, 오류 코드 누락, FAILED가 아닌 상태는 409로 거부합니다. 존재하지 않는 작업은 404입니다.
+
+수동 재시도는 `retryCount`만 0으로 초기화하고 오류와 처리 시각을 지웁니다. payload, 멱등 key, maxRetryCount, 기존 Attempt는 유지합니다. 동시에 두 요청이 들어오면 작업 행 잠금으로 하나만 승인됩니다. 이미 저장된 Attempt가 있으면 이후 실제 HTTP 호출의 Attempt 번호는 기존 최댓값 다음 번호를 사용합니다.
 
 `INTEGRATION_WORKER_RECOVERY_THRESHOLD`로 stale 기준을 바꿀 수 있으며 기본값은 60초입니다. PROCESSING 복구는 기존 최대 3회의 자동 재실행 예산에 포함됩니다. retryCount가 3인 stale Task는 추가 HTTP 호출 없이 `FAILED / PROCESSING_RECOVERY_EXHAUSTED`가 됩니다. 이 상태는 Groupware 업무 실패가 확인됐다는 뜻이 아니라 자동 처리 안에서 최종 결과를 확정할 수 없다는 뜻입니다. Mock 멱등 기록은 프로세스 재시작 뒤 사라지므로, 이 복구 시나리오는 Mock 상태를 유지한 채 Worker 프로세스 중단을 재현해야 검증할 수 있습니다. lease, 다중 Worker 경쟁 제어, 수동 재시도는 범위에 포함하지 않습니다.
 

@@ -60,4 +60,8 @@ public interface IntegrationTaskRepository extends JpaRepository<IntegrationTask
             @Param("processing") IntegrationTaskStatus processing,
             @Param("cutoff") Instant cutoff
     );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select task from IntegrationTask task where task.id = :id")
+    Optional<IntegrationTask> findByIdForUpdate(@Param("id") Long id);
 }

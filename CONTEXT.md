@@ -49,6 +49,9 @@ IntegrationTask를 처리하며 결과까지 확인해 저장한 외부 HTTP 호
 **자동 재시도 횟수(retryCount)**:
 IntegrationTask에서 시작한 자동 재실행 횟수로, 자동 재실행 예산을 관리한다. 최초 실행은 재시도 횟수에 포함하지 않으며, RETRY_WAIT 작업이나 오래된 PROCESSING 작업이 다시 PROCESSING으로 시작될 때 증가한다. PROCESSING 복구가 개입하면 저장된 IntegrationAttempt 순번과 일대일로 대응하지 않을 수 있다.
 
+**수동 재시도**:
+관리자가 최종 실패한 외부 연계 작업의 처리를 다시 요청하는 일이다. 재시도 가능한 실패만 대상으로 하며, 기존 작업의 직원 정보 스냅샷과 멱등 키, 호출 이력은 유지한다.
+
 **처리 시작 시각(processingStartedAt)**:
 외부 연계 작업이 PROCESSING 상태로 시작된 시각이다. 이 시각이 정해진 복구 기준보다 오래된 작업은 처리 중단 여부를 다시 확인하고 자동 재실행할 수 있다.
 

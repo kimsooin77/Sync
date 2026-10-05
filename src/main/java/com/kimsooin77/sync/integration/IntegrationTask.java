@@ -259,4 +259,16 @@ public class IntegrationTask {
         lastErrorCode = "PROCESSING_RECOVERY_EXHAUSTED";
         lastErrorMessage = "Automatic processing ended before the external result could be confirmed";
     }
+
+    public void resetForManualRetry() {
+        if (status != IntegrationTaskStatus.FAILED) {
+            throw new IllegalStateException("only failed integration tasks can be retried manually");
+        }
+        status = IntegrationTaskStatus.PENDING;
+        retryCount = 0;
+        nextRetryAt = null;
+        processingStartedAt = null;
+        lastErrorCode = null;
+        lastErrorMessage = null;
+    }
 }

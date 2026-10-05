@@ -13,6 +13,10 @@ import java.util.Optional;
 @Service
 public class IntegrationTaskTransactionService {
 
+    private static final java.util.Set<String> MANUALLY_RETRYABLE_ERRORS = java.util.Set.of(
+            "GROUPWARE_HTTP_ERROR", "GROUPWARE_CONNECTION_ERROR", "GROUPWARE_TIMEOUT",
+            "GROUPWARE_RESPONSE_INVALID", "PROCESSING_RECOVERY_EXHAUSTED");
+
     private final IntegrationTaskRepository integrationTaskRepository;
     private final IntegrationAttemptRepository integrationAttemptRepository;
 
@@ -116,6 +120,22 @@ public class IntegrationTaskTransactionService {
             task.markFailed(errorCode, safeErrorMessage);
         }
         integrationTaskRepository.flush();
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public IntegrationTaskRetryResult retryFailedTask(Long taskId) {
+        Objects.requireNonNull(taskId, "taskId");
+        IntegrationTask task = integrationTaskRepository.findByIdForUpdate(taskId)
+                .orElseThrow(() -> new IntegrationTaskNotFoundException(taskId));
+        if (task.getStatus() != IntegrationTaskStatus.FAILED) {
+            throw new IntegrationTaskRetryRejectedException("TASK_NOT_FAILED");
+        }
+        if (!MANUALLY_RETRYABLE_ERRORS.contains(task.getLastErrorCode())) {
+            throw new IntegrationTaskRetryRejectedException("TASK_RETRY_NOT_ALLOWED");
+        }
+        task.resetForManualRetry();
+        integrationTaskRepository.flush();
+        return new IntegrationTaskRetryResult(task.getId(), task.getStatus(), task.getRetryCount());
     }
 
     private IntegrationTask processingTask(Long taskId) {

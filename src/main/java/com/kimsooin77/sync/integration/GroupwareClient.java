@@ -78,15 +78,26 @@ public class GroupwareClient {
                             && isAccountNotFound(responseBody)) {
                         return new GroupwareCallResult(status);
                     }
-                    throw new GroupwareClientException("GROUPWARE_HTTP_ERROR",
+                    String errorCode = status == 409 && isIdempotencyConflict(responseBody)
+                            ? "IDEMPOTENCY_KEY_CONFLICT" : "GROUPWARE_HTTP_ERROR";
+                    throw new GroupwareClientException(errorCode,
                             "Groupware returned an HTTP error", status, null);
                 });
     }
 
     private boolean isAccountNotFound(byte[] responseBody) {
         try {
-            MockGroupwareError error = objectMapper.readValue(responseBody, MockGroupwareError.class);
+            GroupwareErrorResponse error = objectMapper.readValue(responseBody, GroupwareErrorResponse.class);
             return error != null && "ACCOUNT_NOT_FOUND".equals(error.code());
+        } catch (JacksonException invalidBody) {
+            return false;
+        }
+    }
+
+    private boolean isIdempotencyConflict(byte[] responseBody) {
+        try {
+            GroupwareErrorResponse error = objectMapper.readValue(responseBody, GroupwareErrorResponse.class);
+            return error != null && "IDEMPOTENCY_KEY_CONFLICT".equals(error.code());
         } catch (JacksonException invalidBody) {
             return false;
         }

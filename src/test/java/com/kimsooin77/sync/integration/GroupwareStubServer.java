@@ -161,6 +161,12 @@ final class GroupwareStubServer {
         failingEmployeeNos.add(employeeNo);
     }
 
+    void clearFailures() {
+        failingEmployeeNos.clear();
+        failureStatuses.clear();
+        unrelatedNotFoundEmployeeNos.clear();
+    }
+
     void failWithStatus(String employeeNo, int httpStatus) {
         failingEmployeeNos.add(employeeNo);
         failureStatuses.put(employeeNo, httpStatus);

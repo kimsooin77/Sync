@@ -9,7 +9,7 @@ public record GroupwareAccount(
         boolean enabled
 ) {
 
-    static GroupwareAccount from(GroupwareAccountRequest request, boolean enabled) {
+    public static GroupwareAccount from(GroupwareAccountRequest request, boolean enabled) {
         return new GroupwareAccount(request.employeeNo(), request.name(), request.email(),
                 request.departmentCode(), request.employmentStatus(), enabled);
     }
