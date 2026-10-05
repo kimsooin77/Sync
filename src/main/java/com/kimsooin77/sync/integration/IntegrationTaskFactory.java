@@ -30,10 +30,10 @@ public class IntegrationTaskFactory {
     public Optional<IntegrationTask> forInserted(Employee employee, SyncItem syncItem) {
         Objects.requireNonNull(employee, "employee");
         Objects.requireNonNull(syncItem, "syncItem");
-        if (employee.getEmploymentStatus() == EmploymentStatus.TERMINATED) {
-            return Optional.empty();
-        }
-        return Optional.of(create(employee, syncItem, IntegrationAction.CREATE_ACCOUNT));
+        IntegrationAction action = employee.getEmploymentStatus() == EmploymentStatus.TERMINATED
+                ? IntegrationAction.DISABLE_ACCOUNT
+                : IntegrationAction.CREATE_ACCOUNT;
+        return Optional.of(create(employee, syncItem, action));
     }
 
     public IntegrationTask forUpdated(
@@ -54,8 +54,7 @@ public class IntegrationTaskFactory {
                 .map(EmploymentStatus.class::cast)
                 .findFirst()
                 .orElse(employee.getEmploymentStatus());
-        IntegrationAction action = previousStatus != EmploymentStatus.TERMINATED
-                && employee.getEmploymentStatus() == EmploymentStatus.TERMINATED
+        IntegrationAction action = employee.getEmploymentStatus() == EmploymentStatus.TERMINATED
                 ? IntegrationAction.DISABLE_ACCOUNT
                 : IntegrationAction.UPDATE_ACCOUNT;
         return create(employee, syncItem, action);

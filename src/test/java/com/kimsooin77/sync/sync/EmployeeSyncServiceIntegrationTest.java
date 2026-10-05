@@ -169,7 +169,7 @@ class EmployeeSyncServiceIntegrationTest {
     }
 
     @Test
-    void createsTaskForNewOnLeaveEmployeeButNotForNewTerminatedEmployee() {
+    void createsCreateTaskForNewOnLeaveEmployeeAndDisableTaskForNewTerminatedEmployee() {
         SyncJobResult onLeaveResult = employeeSyncService.synchronize(List.of(
                 hr("E-2501", "On leave", null, null, "ON_LEAVE")));
         SyncJobResult terminatedResult = employeeSyncService.synchronize(List.of(
@@ -186,7 +186,9 @@ class EmployeeSyncServiceIntegrationTest {
         assertThat(integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(onLeave.getId()))
                 .singleElement().extracting(IntegrationTask::getAction)
                 .isEqualTo(IntegrationAction.CREATE_ACCOUNT);
-        assertThat(integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(terminated.getId())).isEmpty();
+        assertThat(integrationTaskRepository.findAllByEmployee_IdOrderByIdAsc(terminated.getId()))
+                .singleElement().extracting(IntegrationTask::getAction)
+                .isEqualTo(IntegrationAction.DISABLE_ACCOUNT);
     }
 
     @Test

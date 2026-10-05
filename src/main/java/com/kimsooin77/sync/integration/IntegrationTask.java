@@ -173,4 +173,33 @@ public class IntegrationTask {
     public Instant getUpdatedAt() {
         return updatedAt;
     }
+
+    public void markProcessing() {
+        if (status != IntegrationTaskStatus.PENDING) {
+            throw new IllegalStateException("only pending integration tasks can be processed");
+        }
+        status = IntegrationTaskStatus.PROCESSING;
+        lastErrorCode = null;
+        lastErrorMessage = null;
+    }
+
+    public void markSucceeded() {
+        if (status != IntegrationTaskStatus.PROCESSING) {
+            throw new IllegalStateException("only processing integration tasks can succeed");
+        }
+        status = IntegrationTaskStatus.SUCCESS;
+        nextRetryAt = null;
+        lastErrorCode = null;
+        lastErrorMessage = null;
+    }
+
+    public void markFailed(String errorCode, String errorMessage) {
+        if (status != IntegrationTaskStatus.PROCESSING) {
+            throw new IllegalStateException("only processing integration tasks can fail");
+        }
+        status = IntegrationTaskStatus.FAILED;
+        lastErrorCode = Objects.requireNonNull(errorCode, "errorCode");
+        lastErrorMessage = Objects.requireNonNull(errorMessage, "errorMessage");
+        nextRetryAt = null;
+    }
 }

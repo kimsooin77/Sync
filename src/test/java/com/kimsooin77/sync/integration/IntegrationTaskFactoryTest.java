@@ -18,7 +18,7 @@ class IntegrationTaskFactoryTest {
             JsonMapper.builder().build(), new IdempotencyKeyGenerator());
 
     @Test
-    void createsTaskForActiveAndOnLeaveButNotForNewTerminatedEmployees() {
+    void createsAccountTasksForActiveAndOnLeaveAndDisableTaskForNewTerminatedEmployees() {
         Employee activeEmployee = employee("E-2001", EmploymentStatus.ACTIVE);
         IntegrationTask active = factory.forInserted(
                 activeEmployee, Day4TestFixtures.insertedItem(activeEmployee)).orElseThrow();
@@ -29,14 +29,15 @@ class IntegrationTaskFactoryTest {
 
         assertThat(active.getAction()).isEqualTo(IntegrationAction.CREATE_ACCOUNT);
         assertThat(onLeave.getAction()).isEqualTo(IntegrationAction.CREATE_ACCOUNT);
-        assertThat(factory.forInserted(
-                terminatedEmployee, Day4TestFixtures.insertedItem(terminatedEmployee)))
-                .isEmpty();
+        IntegrationTask terminated = factory.forInserted(
+                terminatedEmployee, Day4TestFixtures.insertedItem(terminatedEmployee)).orElseThrow();
+        assertThat(terminated.getAction()).isEqualTo(IntegrationAction.DISABLE_ACCOUNT);
         assertNewTaskDefaults(active);
+        assertNewTaskDefaults(terminated);
     }
 
     @Test
-    void selectsDisableOnlyForTransitionIntoTerminatedAndUsesUpdateForRehire() {
+    void selectsDisableForTerminatedFinalStateAndUpdateForRehire() {
         Employee employee = employee("E-3001", EmploymentStatus.TERMINATED);
         EmployeeChangeSet termination = new EmployeeChangeSet(List.of(
                 new EmployeeChangeSet.FieldChange(
@@ -52,6 +53,13 @@ class IntegrationTaskFactoryTest {
         IntegrationTask update = factory.forUpdated(
                 employee, Day4TestFixtures.updatedItem(employee), rehire);
         assertThat(update.getAction()).isEqualTo(IntegrationAction.UPDATE_ACCOUNT);
+
+        employee.updateSnapshot("Changed while terminated", null, null, EmploymentStatus.TERMINATED);
+        EmployeeChangeSet terminatedProfileChange = new EmployeeChangeSet(List.of(
+                new EmployeeChangeSet.FieldChange("name", "Alice", "Changed while terminated")));
+        IntegrationTask repeatedDisable = factory.forUpdated(
+                employee, Day4TestFixtures.updatedItem(employee), terminatedProfileChange);
+        assertThat(repeatedDisable.getAction()).isEqualTo(IntegrationAction.DISABLE_ACCOUNT);
     }
 
     @Test

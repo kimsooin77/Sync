@@ -60,7 +60,7 @@ $env:HR_BASE_URL = 'http://localhost:8080'
 
 ## 현재 범위
 
-직원 엔티티와 저장소, V1~V4 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록을 포함합니다. Groupware HTTP 호출과 Worker 실행은 아직 구현하지 않았습니다.
+직원 엔티티와 저장소, V1~V4 스키마, PostgreSQL 기반 통합 테스트, HR 응답 조회, 모의 HR API, 정규화와 동기화 결과 기록, Groupware HTTP 호출과 Worker를 포함합니다. 자동 재시도와 PROCESSING Task 복구는 아직 구현하지 않았습니다.
 
 ## 직원 스냅샷 규칙
 
@@ -80,11 +80,23 @@ INSERT와 UPDATE는 Employee, SyncItem, AuditLog, 해당되는 IntegrationTask�
 
 AuditLog는 생성 시점의 직원 스냅샷 전체를 기록하고, 수정 시에는 Day3에서 계산한 변경 필드와 이전·이후 값만 기록합니다. IntegrationTask의 payload도 생성 시점의 Employee 스냅샷이며 이후 직원 정보가 바뀌어도 달라지지 않습니다. AuditLog 변경 내용과 Task payload는 JSON 문자열을 TEXT로 저장하고, Task의 멱등 키는 UUID입니다.
 
-신규 ACTIVE 또는 ON_LEAVE 직원은 `CREATE_ACCOUNT` Task를 만듭니다. 신규 TERMINATED 직원은 Task를 만들지 않습니다. 기존 직원이 TERMINATED로 바뀌면 `DISABLE_ACCOUNT`, 그 외 수정은 `UPDATE_ACCOUNT`를 사용합니다. 퇴사 후 재입사는 `UPDATE_ACCOUNT`입니다. Task는 `PENDING`, retryCount 0, maxRetryCount 3으로 생성됩니다. 현재는 Groupware HTTP 호출, Worker, 재시도를 실행하지 않습니다.
+최종 재직 상태가 `TERMINATED`인 INSERT와 UPDATE는 `DISABLE_ACCOUNT` Task를 만듭니다. ACTIVE 또는 ON_LEAVE 신규 직원은 `CREATE_ACCOUNT`, 기존 직원의 ACTIVE 또는 ON_LEAVE 수정은 `UPDATE_ACCOUNT`를 만듭니다. 따라서 최초 TERMINATED 직원도 비활성화 작업을 기록하고, 이후 ACTIVE 또는 ON_LEAVE으로 바뀌면 UPDATE_ACCOUNT가 생성됩니다. SKIP과 FAILED 행에는 Task가 없습니다. Task는 `PENDING`, retryCount 0, maxRetryCount 3으로 생성됩니다.
+
+## Groupware 연계 Worker
+
+Worker는 기본적으로 비활성화되어 있습니다. 실행하려면 `INTEGRATION_WORKER_ENABLED=true`로 설정합니다. 기본 batch size는 10이며 `INTEGRATION_WORKER_BATCH_SIZE`로 조정할 수 있습니다. `INTEGRATION_WORKER_FIXED_DELAY`는 기본 3초입니다. Groupware 주소와 timeout은 각각 `GROUPWARE_BASE_URL`, `GROUPWARE_CONNECT_TIMEOUT`, `GROUPWARE_READ_TIMEOUT`으로 설정합니다.
+
+Worker는 생성 시각과 ID 순서로 PENDING Task를 조회하고 각 Task를 PROCESSING으로 커밋한 뒤 Groupware HTTP 요청을 보냅니다. HTTP 요청 중에는 DB 트랜잭션을 열지 않습니다. 각 요청이 끝나면 SUCCESS 또는 FAILED를 별도 트랜잭션으로 기록합니다. Day 6에서는 자동 재시도를 수행하지 않으며 연계 실패는 FAILED로 남습니다.
+
+Groupware API 계약은 `POST /mock/groupware/accounts`(신규 생성), `PUT /mock/groupware/accounts/{employeeNo}`(계정 생성 또는 활성 상태로 갱신), `PATCH /mock/groupware/accounts/{employeeNo}/disable`(비활성 상태 보장)입니다. POST는 기존 계정에 409를 반환하고, PUT은 계정이 없으면 새로 만듭니다. DISABLE은 이미 비활성인 계정과 없는 계정에 성공하며, 외부 Groupware의 404도 성공으로 취급합니다. DTO는 `employee_no`, `name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. Task의 UUID 멱등 키는 `Idempotency-Key` 헤더로 전달됩니다.
+
+Mock Groupware는 기본적으로 비활성화되어 있습니다. 앱 내부 Mock API를 사용하려면 `MOCK_GROUPWARE_ENABLED=true`로 설정합니다. 계정은 메모리에만 저장되므로 애플리케이션을 재시작하면 사라집니다.
+
+Task가 PROCESSING으로 커밋된 직후 애플리케이션이 종료되면 해당 Task는 PROCESSING에 남아 Day 6 Worker가 다시 처리하지 않습니다. lease 및 복구는 Day 8 멱등성·복구 단계에서 다룹니다.
 
 동기화 실행이 FAILED이면 실행 자체가 정상적으로 완료되지 못했다는 뜻입니다. 직원별 처리는 각각 커밋되므로 시스템 오류 전에 완료된 직원과 결과는 남을 수 있으며, FAILED가 전체 직원 처리를 원자적으로 롤백했다는 뜻은 아닙니다.
 
-실제 HR 주소는 `HR_BASE_URL`, 연결 제한 시간은 `HR_CONNECT_TIMEOUT`, 응답 제한 시간은 `HR_READ_TIMEOUT`으로 설정합니다. HR 호출 재시도는 아직 수행하지 않습니다. Groupware HTTP 호출, Worker와 실제 외부 계정 연계는 이후 단계 범위입니다.
+실제 HR 주소는 `HR_BASE_URL`, 연결 제한 시간은 `HR_CONNECT_TIMEOUT`, 응답 제한 시간은 `HR_READ_TIMEOUT`으로 설정합니다. HR 호출 재시도는 아직 수행하지 않습니다.
 
 Flyway migration이 데이터베이스 스키마의 유일한 기준이며, Hibernate는 `validate` 모드로 매핑과 스키마를 확인합니다.
 

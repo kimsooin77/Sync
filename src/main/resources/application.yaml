@@ -16,7 +16,18 @@ app:
     base-url: ${HR_BASE_URL:http://localhost:8080}
     connect-timeout: ${HR_CONNECT_TIMEOUT:2s}
     read-timeout: ${HR_READ_TIMEOUT:5s}
+  groupware:
+    base-url: ${GROUPWARE_BASE_URL:http://localhost:${server.port:8080}}
+    connect-timeout: ${GROUPWARE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${GROUPWARE_READ_TIMEOUT:5s}
+  integration:
+    worker:
+      enabled: ${INTEGRATION_WORKER_ENABLED:false}
+      fixed-delay: ${INTEGRATION_WORKER_FIXED_DELAY:3s}
+      batch-size: ${INTEGRATION_WORKER_BATCH_SIZE:10}
   mock:
     hr:
       enabled: ${MOCK_HR_ENABLED:false}
       scenario: ${MOCK_HR_SCENARIO:initial}
+    groupware:
+      enabled: ${MOCK_GROUPWARE_ENABLED:false}

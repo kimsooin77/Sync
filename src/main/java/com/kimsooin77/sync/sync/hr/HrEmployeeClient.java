@@ -4,6 +4,7 @@ import com.kimsooin77.sync.sync.HrEmployeeResponse;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -23,7 +24,7 @@ public class HrEmployeeClient {
 
     private final RestClient restClient;
 
-    public HrEmployeeClient(RestClient restClient) {
+    public HrEmployeeClient(@Qualifier("hrRestClient") RestClient restClient) {
         this.restClient = restClient;
     }
 
