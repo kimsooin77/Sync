@@ -4,6 +4,8 @@ import com.kimsooin77.sync.api.auth.CsrfResponse;
 import com.kimsooin77.sync.api.auth.LoginRequest;
 import com.kimsooin77.sync.employee.PostgreSqlTestConfiguration;
 import com.kimsooin77.sync.integration.GroupwareAccountRequest;
+import com.kimsooin77.sync.simulation.hr.MockHrScenarioState;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,10 +22,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"app.mock.hr.enabled=true", "app.mock.groupware.enabled=true"})
+        properties = {"app.mock.hr.enabled=true", "app.mock.hr.scenario=initial", "app.mock.groupware.enabled=true"})
 @Import(PostgreSqlTestConfiguration.class)
 class Day10SecurityIntegrationTest {
+    @Autowired MockHrScenarioState scenarioState;
     @LocalServerPort int port;
+
+    @BeforeEach void resetMockScenario() { scenarioState.changeTo("initial"); }
     @Test void adminApiRequiresSessionButMockHrRemainsPublic() {
         RestClient anonymous = RestClient.builder().baseUrl(url()).build();
         assertThatThrownBy(() -> anonymous.get().uri("/api/employees").retrieve().toBodilessEntity())
@@ -71,6 +76,39 @@ class Day10SecurityIntegrationTest {
         assertThat(session.client().put().uri("/mock/groupware/failure-simulation/E-PROTECTED")
                 .body(java.util.Map.of("mode", "NORMAL")).retrieve().toBodilessEntity().getStatusCode())
                 .isEqualTo(HttpStatus.NO_CONTENT);
+        assertThatThrownBy(() -> session.noCsrfClient().put().uri("/mock/hr/scenario")
+                .body(java.util.Map.of("scenario", "changed")).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class,
+                        failure -> assertThat(failure.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+        assertThat(session.client().put().uri("/mock/hr/scenario")
+                .body(java.util.Map.of("scenario", "changed")).retrieve().toBodilessEntity().getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+        assertThat(session.client().get().uri("/mock/hr/scenario").retrieve().body(String.class))
+                .contains("\"scenario\":\"changed\"");
+    }
+
+    @Test void mockHrScenarioRequiresAdminAndCanBeChangedAtRuntime() {
+        RestClient anonymous = RestClient.builder().baseUrl(url()).build();
+        assertThatThrownBy(() -> anonymous.get().uri("/mock/hr/scenario").retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class,
+                        failure -> assertThat(failure.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
+
+        AdminHttpSession session = AdminHttpSession.login(url());
+        assertThat(session.client().get().uri("/mock/hr/scenario").retrieve().body(String.class))
+                .contains("\"scenario\":\"initial\"");
+        assertThat(session.client().put().uri("/mock/hr/scenario").body(java.util.Map.of("scenario", "partial-invalid"))
+                .retrieve().body(String.class)).contains("\"scenario\":\"partial-invalid\"");
+        assertThat(session.client().get().uri("/mock/hr/employees").retrieve().body(String.class))
+                .contains("\"employment_status\":\"UNKNOWN\"");
+
+        assertThatThrownBy(() -> session.client().put().uri("/mock/hr/scenario")
+                .body(java.util.Map.of("scenario", "unsupported")).retrieve().toBodilessEntity())
+                .isInstanceOfSatisfying(RestClientResponseException.class, failure -> {
+                    assertThat(failure.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(failure.getResponseBodyAsString()).contains("INVALID_REQUEST");
+                });
+        session.client().put().uri("/mock/hr/scenario").body(java.util.Map.of("scenario", "initial"))
+                .retrieve().toBodilessEntity();
     }
 
     @Test void loginAndLogoutRequireCsrfAndLogoutClearsSession() {

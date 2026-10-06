@@ -9,14 +9,14 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "app.mock.hr", name = "enabled", havingValue = "true")
 public class MockHrDataset {
 
-    private final MockHrProperties properties;
+    private final MockHrScenarioState scenarioState;
 
-    public MockHrDataset(MockHrProperties properties) {
-        this.properties = properties;
+    public MockHrDataset(MockHrScenarioState scenarioState) {
+        this.scenarioState = scenarioState;
     }
 
     public List<MockHrEmployeeResponse> employees() {
-        return switch (properties.scenario()) {
+        return switch (scenarioState.current()) {
             case INITIAL -> List.of(
                     employee("E1001", "김수인", "sooin@company.com", "DEV01", "ACTIVE"),
                     employee("E1002", "홍길동", "hong@company.com", "DEV01", "ACTIVE"),

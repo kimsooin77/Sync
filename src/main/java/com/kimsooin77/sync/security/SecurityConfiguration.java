@@ -60,6 +60,7 @@ public class SecurityConfiguration {
                                         "/mock/groupware/accounts/{employeeNo}/disable")))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/csrf", "/api/auth/login").permitAll()
+                        .requestMatchers("/mock/hr/scenario").hasRole("ADMIN")
                         .requestMatchers(
                                 PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET,
                                         "/mock/hr/employees"),

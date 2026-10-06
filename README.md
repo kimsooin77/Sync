@@ -56,7 +56,52 @@ $env:HR_BASE_URL = 'http://localhost:8080'
 .\gradlew.bat bootRun
 ```
 
-다른 터미널에서 `Invoke-RestMethod -Method Post http://localhost:8080/api/sync-jobs`를 호출합니다. 기본 `initial` 시나리오는 직원 3명을 반환합니다. 같은 요청을 다시 보내면 동일 스냅샷이므로 세 행이 `SKIPPED`됩니다. `MOCK_HR_SCENARIO=changed`로 설정하고 애플리케이션을 다시 시작하면 부서 변경과 퇴사 상태 변경을 확인할 수 있습니다. `partial-invalid` 시나리오는 한 행의 재직 상태를 알 수 없는 값으로 보내 행 단위 오류 격리를 확인합니다.
+다른 터미널에서 `Invoke-RestMethod -Method Post http://localhost:8080/api/sync-jobs`를 호출합니다. 기본 `initial` 시나리오는 직원 3명을 반환합니다. 같은 요청을 다시 보내면 동일 스냅샷이므로 세 행이 `SKIPPED`됩니다. `changed` 시나리오로 바꾸면 부서 변경과 퇴사 상태를 확인할 수 있으며, `partial-invalid` 시나리오는 알 수 없는 재직 상태를 가진 한 행만 실패 처리합니다.
+
+Mock HR가 활성화되면 관리자 화면에서 서버를 재시작하지 않고 시나리오를 바꿀 수 있습니다.
+
+```text
+GET /mock/hr/scenario
+PUT /mock/hr/scenario
+{"scenario":"initial" | "changed" | "partial-invalid"}
+```
+
+조회와 변경 모두 관리자 세션이 필요하며 PUT은 CSRF 보호를 받습니다. 시작 시 `MOCK_HR_SCENARIO` 값이 메모리의 초기 시나리오가 됩니다. 앱을 재시작하면 현재 선택은 이 시작 설정으로 돌아갑니다. 실제 HR 클라이언트와 직원 동기화 규칙은 이 데모 API의 영향을 받지 않습니다.
+
+### 화면 실행과 대표 데모
+
+애플리케이션을 실행하기 전에 `ADMIN_USERNAME`, 유효한 BCrypt `ADMIN_PASSWORD_HASH`, `MOCK_HR_ENABLED=true`, `MOCK_GROUPWARE_ENABLED=true`, `INTEGRATION_WORKER_ENABLED=true`를 설정합니다. 기본 DB를 비운 전용 데모 환경에서 아래 흐름을 권장합니다.
+
+```powershell
+$env:ADMIN_USERNAME = 'admin'
+$env:ADMIN_PASSWORD_HASH = '<valid BCrypt hash>'
+$env:MOCK_HR_ENABLED = 'true'
+$env:MOCK_HR_SCENARIO = 'initial'
+$env:MOCK_GROUPWARE_ENABLED = 'true'
+$env:INTEGRATION_WORKER_ENABLED = 'true'
+$env:HR_BASE_URL = 'http://localhost:8080'
+.\gradlew.bat bootRun
+```
+
+다른 터미널에서 관리자 화면을 실행합니다.
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+브라우저에서 `http://127.0.0.1:5173`을 열고 설정한 관리자 계정으로 로그인합니다. Vite는 `/api`와 `/mock` 요청을 Spring Boot의 `localhost:8080`으로 전달하므로 개발 중에도 브라우저와 API가 같은 origin처럼 동작합니다. `ADMIN_PASSWORD_HASH`는 반드시 본인이 사용할 비밀번호의 BCrypt 해시로 설정합니다. 관리자 설정이 빠지거나 유효하지 않으면 서버가 시작되지 않습니다.
+
+화면에서 다음 순서로 확인합니다.
+
+1. 대시보드 시나리오를 `initial`로 둡니다. 아직 HR Sync를 실행하지 않은 상태에서 외부 연계 화면을 열고 E1002를 `HTTP 500`, E1003을 `FAIL_ONCE_THEN_SUCCESS`로 설정합니다.
+2. 대시보드에서 HR 동기화를 실행합니다. E1001은 성공하고 E1002는 자동 재시도 후 FAILED가 되며, E1003은 첫 호출 실패 후 다음 Attempt에서 성공합니다.
+3. E1002 규칙을 `NORMAL`로 바꾸고 수동 재처리를 요청합니다. 버튼 안내는 Worker 대기 상태임을 표시하며 외부 호출 성공으로 오인하지 않습니다. 성공 후 세 직원의 Groupware 계정이 존재합니다.
+4. 대시보드에서 시나리오를 `changed`로 바꾸고 다시 HR 동기화를 실행합니다. E1001은 SKIP, E1002는 부서 변경과 `UPDATE_ACCOUNT`, E1003은 퇴사와 `DISABLE_ACCOUNT`로 처리됩니다. 기존 Groupware 계정 상태에 반영됩니다.
+5. 같은 `changed` 시나리오를 다시 실행하면 세 직원 모두 SKIP되고 새 IntegrationTask는 만들어지지 않습니다.
+
+외부 연계 화면은 기본적으로 수동 새로고침입니다. 사용자가 3초 자동 새로고침을 켜면 이 화면에 있는 동안 Task 목록과 선택된 진행 중 Task/Attempt만 갱신합니다. 선택한 Task가 `SUCCESS` 또는 `FAILED`가 되면 상세 polling을 멈추며 장애 시뮬레이션 규칙은 자동 조회하지 않습니다. 화면을 떠나면 polling timer와 진행 중 조회를 정리합니다.
 
 ## 현재 범위
 

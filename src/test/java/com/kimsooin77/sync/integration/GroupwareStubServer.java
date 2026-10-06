@@ -19,7 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-final class GroupwareStubServer {
+public final class GroupwareStubServer {
 
     private final ConcurrentHashMap<String, GroupwareAccount> accounts = new ConcurrentHashMap<>();
     private final Set<String> failingEmployeeNos = ConcurrentHashMap.newKeySet();
@@ -117,7 +117,7 @@ final class GroupwareStubServer {
         server.start();
     }
 
-    static GroupwareStubServer start() {
+    public static GroupwareStubServer start() {
         try {
             return new GroupwareStubServer();
         } catch (IOException failure) {
@@ -125,7 +125,7 @@ final class GroupwareStubServer {
         }
     }
 
-    String baseUrl() {
+    public String baseUrl() {
         return "http://localhost:" + server.getAddress().getPort();
     }
 
@@ -141,7 +141,7 @@ final class GroupwareStubServer {
         return java.util.List.copyOf(idempotencyKeys.getOrDefault(employeeNo, new CopyOnWriteArrayList<>()));
     }
 
-    void clear() {
+    public void clear() {
         accounts.clear();
         failingEmployeeNos.clear();
         failureStatuses.clear();
@@ -176,7 +176,7 @@ final class GroupwareStubServer {
         unrelatedNotFoundEmployeeNos.add(employeeNo);
     }
 
-    void forwardTo(String baseUrl) {
+    public void forwardTo(String baseUrl) {
         forwardTarget = baseUrl;
     }
 
@@ -236,7 +236,7 @@ final class GroupwareStubServer {
         }
     }
 
-    void close() {
+    public void close() {
         server.stop(0);
         serverExecutor.shutdownNow();
     }
