@@ -1,0 +1,11 @@
+{
+  "implementation": "bulk-after",
+  "gitCommit": "3d3691af8c2fa8aa640ef35e3a495ac6a43e6507 (working tree modified)",
+  "javaVersion": "21.0.6+7-LTS",
+  "postgresVersion": "PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "protocol": "same performanceTest invocation/context; one warm-up per scenario/implementation; three measured repetitions; scenario fixture/reset outside timed interval; order alternated per repetition",
+  "scenarios": [
+    {"scenario": "A", "medianMillis": 18332.157, "samples": [{"elapsedMillis": 19665.616, "preparedStatements": 10018, "employeeIndividualSelects": 0, "employeeBulkSelects": 10, "inserted": 0, "updated": 0, "skipped": 10000, "failed": 0, "syncItems": 10000, "auditLogs": 0, "integrationTasks": 0}, {"elapsedMillis": 17414.587, "preparedStatements": 10018, "employeeIndividualSelects": 0, "employeeBulkSelects": 10, "inserted": 0, "updated": 0, "skipped": 10000, "failed": 0, "syncItems": 10000, "auditLogs": 0, "integrationTasks": 0}, {"elapsedMillis": 18332.157, "preparedStatements": 10018, "employeeIndividualSelects": 0, "employeeBulkSelects": 10, "inserted": 0, "updated": 0, "skipped": 10000, "failed": 0, "syncItems": 10000, "auditLogs": 0, "integrationTasks": 0}]},
+    {"scenario": "B", "medianMillis": 21988.009, "samples": [{"elapsedMillis": 22522.670, "preparedStatements": 14018, "employeeIndividualSelects": 1000, "employeeBulkSelects": 10, "inserted": 0, "updated": 1000, "skipped": 9000, "failed": 0, "syncItems": 10000, "auditLogs": 1000, "integrationTasks": 1000}, {"elapsedMillis": 21988.009, "preparedStatements": 14018, "employeeIndividualSelects": 1000, "employeeBulkSelects": 10, "inserted": 0, "updated": 1000, "skipped": 9000, "failed": 0, "syncItems": 10000, "auditLogs": 1000, "integrationTasks": 1000}, {"elapsedMillis": 20734.657, "preparedStatements": 14018, "employeeIndividualSelects": 1000, "employeeBulkSelects": 10, "inserted": 0, "updated": 1000, "skipped": 9000, "failed": 0, "syncItems": 10000, "auditLogs": 1000, "integrationTasks": 1000}]}
+  ]
+}

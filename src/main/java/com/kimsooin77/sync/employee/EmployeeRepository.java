@@ -7,10 +7,18 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 
 public interface EmployeeRepository extends JpaRepository<Employee, Long> {
 
     Optional<Employee> findByEmployeeNo(String employeeNo);
+
+    @Query("select new com.kimsooin77.sync.employee.ExistingEmployeeSnapshot(e.id, e.employeeNo, e.name, "
+            + "e.companyEmail, e.departmentCode, e.employmentStatus) from Employee e "
+            + "where e.employeeNo in :employeeNos")
+    List<ExistingEmployeeSnapshot> findSnapshotsByEmployeeNoIn(
+            @Param("employeeNos") Collection<String> employeeNos);
 
     @Query("select new com.kimsooin77.sync.employee.EmployeeListRow(e.id, e.employeeNo, e.name, e.companyEmail, "
             + "e.departmentCode, e.employmentStatus, e.createdAt, e.updatedAt) from Employee e "

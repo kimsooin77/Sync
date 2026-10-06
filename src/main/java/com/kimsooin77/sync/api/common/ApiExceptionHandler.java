@@ -2,6 +2,7 @@ package com.kimsooin77.sync.api.common;
 import com.kimsooin77.sync.employee.EmployeeNotFoundException;
 import com.kimsooin77.sync.integration.IntegrationTaskNotFoundException;
 import com.kimsooin77.sync.sync.SyncJobNotFoundException;
+import com.kimsooin77.sync.sync.SyncAlreadyRunningException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,8 @@ public class ApiExceptionHandler {
     ResponseEntity<ApiError> employeeMissing() { return error(HttpStatus.NOT_FOUND, "EMPLOYEE_NOT_FOUND", "직원을 찾을 수 없습니다."); }
     @ExceptionHandler(SyncJobNotFoundException.class)
     ResponseEntity<ApiError> syncJobMissing() { return error(HttpStatus.NOT_FOUND, "SYNC_JOB_NOT_FOUND", "동기화 작업을 찾을 수 없습니다."); }
+    @ExceptionHandler(SyncAlreadyRunningException.class)
+    ResponseEntity<ApiError> syncAlreadyRunning() { return error(HttpStatus.CONFLICT, "SYNC_ALREADY_RUNNING", "직원 동기화가 이미 실행 중입니다."); }
     @ExceptionHandler(IntegrationTaskNotFoundException.class)
     ResponseEntity<ApiError> taskMissing() { return error(HttpStatus.NOT_FOUND, "TASK_NOT_FOUND", "연계 작업을 찾을 수 없습니다."); }
     @ExceptionHandler({IllegalArgumentException.class, MethodArgumentNotValidException.class,

@@ -390,6 +390,11 @@ class EmployeeSyncServiceIntegrationTest {
         assertThat(items).hasSize(1);
         assertThat(items.getFirst().getResult()).isEqualTo(SyncItemResult.INSERTED);
         assertThat(items.getFirst().getEmployeeId()).isEqualTo(committed.getId());
+
+        SyncJobResult afterDatabaseFailure = employeeSyncService.synchronize(List.of(
+                hr("E-7002", "Sync after system failure", null, null, "ACTIVE")));
+        assertThat(afterDatabaseFailure.status()).isEqualTo(SyncJobStatus.COMPLETED);
+        assertThat(afterDatabaseFailure.insertedCount()).isEqualTo(1);
     }
 
     @Test

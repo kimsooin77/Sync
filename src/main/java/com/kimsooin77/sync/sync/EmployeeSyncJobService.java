@@ -13,28 +13,33 @@ public class EmployeeSyncJobService {
     private final HrEmployeeClient hrEmployeeClient;
     private final EmployeeSyncService employeeSyncService;
     private final SyncJobTransactionService syncJobTransactionService;
+    private final SyncExecutionGuard syncExecutionGuard;
 
     public EmployeeSyncJobService(
             HrEmployeeClient hrEmployeeClient,
             EmployeeSyncService employeeSyncService,
-            SyncJobTransactionService syncJobTransactionService
+            SyncJobTransactionService syncJobTransactionService,
+            SyncExecutionGuard syncExecutionGuard
     ) {
         this.hrEmployeeClient = Objects.requireNonNull(hrEmployeeClient, "hrEmployeeClient");
         this.employeeSyncService = Objects.requireNonNull(employeeSyncService, "employeeSyncService");
         this.syncJobTransactionService = Objects.requireNonNull(
                 syncJobTransactionService, "syncJobTransactionService");
+        this.syncExecutionGuard = Objects.requireNonNull(syncExecutionGuard, "syncExecutionGuard");
     }
 
     public SyncJobResult synchronizeFromHr() {
-        Long syncJobId = syncJobTransactionService.start();
-        try {
-            List<HrEmployeeResponse> responses = hrEmployeeClient.fetchEmployees();
-            return employeeSyncService.synchronize(syncJobId, responses);
-        } catch (HrEmployeeClientException hrFailure) {
-            return syncJobTransactionService.fail(
-                    syncJobId,
-                    hrFailure.getErrorCode().name(),
-                    hrFailure.getMessage());
-        }
+        return syncExecutionGuard.execute(() -> {
+            Long syncJobId = syncJobTransactionService.start();
+            try {
+                List<HrEmployeeResponse> responses = hrEmployeeClient.fetchEmployees();
+                return employeeSyncService.synchronizeWithinGuard(syncJobId, responses);
+            } catch (HrEmployeeClientException hrFailure) {
+                return syncJobTransactionService.fail(
+                        syncJobId,
+                        hrFailure.getErrorCode().name(),
+                        hrFailure.getMessage());
+            }
+        });
     }
 }

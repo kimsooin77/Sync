@@ -1,6 +1,7 @@
 package com.kimsooin77.sync.sync;
 
 import com.kimsooin77.sync.employee.Employee;
+import com.kimsooin77.sync.employee.ExistingEmployeeSnapshot;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,6 +20,18 @@ public class EmployeeComparator {
         addIfChanged(changes, "email", current.getCompanyEmail(), incoming.email());
         addIfChanged(changes, "departmentCode", current.getDepartmentCode(), incoming.departmentCode());
         addIfChanged(changes, "employmentStatus", current.getEmploymentStatus(), incoming.employmentStatus());
+        return new EmployeeChangeSet(changes);
+    }
+
+    public EmployeeChangeSet compare(ExistingEmployeeSnapshot current, NormalizedEmployee incoming) {
+        Objects.requireNonNull(current, "current");
+        Objects.requireNonNull(incoming, "incoming");
+
+        List<EmployeeChangeSet.FieldChange> changes = new ArrayList<>();
+        addIfChanged(changes, "name", current.name(), incoming.name());
+        addIfChanged(changes, "email", current.email(), incoming.email());
+        addIfChanged(changes, "departmentCode", current.departmentCode(), incoming.departmentCode());
+        addIfChanged(changes, "employmentStatus", current.employmentStatus(), incoming.employmentStatus());
         return new EmployeeChangeSet(changes);
     }
 

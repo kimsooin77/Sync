@@ -48,6 +48,26 @@ macOS 또는 Linux:
 
 외부 HR JSON은 `employee_no`, `employee_name`, `email`, `department_code`, `employment_status` 필드를 사용합니다. HR HTTP 호출은 DB 트랜잭션 밖에서 수행합니다. 연결 오류, 시간 초과, HTTP 오류 또는 전체 응답 해석 실패는 직원 행을 만들지 않고 `FAILED` 작업으로 기록하며, 응답에는 안전한 오류 코드와 일반 메시지만 포함합니다. 한 직원의 잘못된 재직 상태는 해당 행만 실패 처리하고 나머지 행은 계속 처리합니다.
 
+애플리케이션 인스턴스 하나 안에서는 HR Sync를 한 번에 하나만 실행합니다. 실행 중 두 번째 `POST /api/sync-jobs`는 즉시 `409 SYNC_ALREADY_RUNNING`을 받고 SyncJob을 만들지 않습니다. guard는 Job 생성과 HR 호출 전에 획득하며 성공·실패 모두 종료 시 해제합니다. 이는 단일 인스턴스의 메모리 안에서만 동작하므로 여러 애플리케이션 인스턴스나 애플리케이션 밖에서 Employee를 직접 수정하는 경우의 동시성은 보장하지 않습니다.
+
+반복 동기화에서는 먼저 정상화와 중복 검증을 마친 사번을 1,000개씩 조회해 Employee Snapshot Map을 만듭니다. 변경이 없는 직원은 Snapshot을 기준으로 SKIP하고 개별 Employee SELECT를 생략합니다. INSERT 또는 변경 후보는 기존 직원별 `REQUIRES_NEW` 트랜잭션 안에서 Employee를 다시 조회해 최신 상태로 최종 판정합니다. 1,000개는 10,000건에서 큰 단일 IN 조건을 피하면서 조회를 약 10회로 제한하는 실용적인 초기 chunk 값입니다. 직원별 트랜잭션과 SyncItem 저장은 계속 수행합니다.
+
+### Day 12 성능 측정
+
+10,000건 동기화의 직원별 조회 경로와 Bulk Snapshot 경로를 하나의 `performanceTest` 실행에서 같은 Spring Context 및 PostgreSQL 17.11 Testcontainers 조건으로 비교했습니다. 기준 구현은 Day 11 직원별 처리 루프를 테스트 전용 `LegacyEmployeeSyncRunner`로 보존합니다. 시나리오별 1회 워밍업 뒤 각 구현을 3회 측정하고, 측정 순서를 번갈아 실행했습니다. fixture 생성, DB 초기화, 결과 검증 쿼리는 처리 시간과 SQL 집계에서 제외했습니다.
+
+| Scenario | 처리 결과 | Before median | After median | Prepared SQL | Employee 조회 SQL |
+|---|---|---:|---:|---:|---|
+| A: 기존 10,000명 전체 동일 | SKIP 10,000, SyncItem 10,000 | 27,172.516 ms | 18,332.157 ms | 20,007 → 10,018 | 개별 10,000 → 0, bulk 0 → 10 |
+| B: 10번째마다 부서 변경 | UPDATE 1,000, SKIP 9,000, SyncItem 10,000, AuditLog/Task 각 1,000 | 29,770.774 ms | 21,988.009 ms | 23,007 → 14,018 | 개별 10,000 → 1,000, bulk 0 → 10 |
+
+이 한 번의 로컬 paired 실행에서 중앙 처리 시간은 Scenario A 약 32.5%, B 약 26.1% 낮았습니다. 이 수치는 해당 개발 환경에서 얻은 관측값이며 다른 환경의 개선 폭을 보장하지 않습니다. 직원별 SyncItem 저장과 트랜잭션은 그대로 수행합니다. 최적화는 변경 후보만 직원 트랜잭션 안에서 다시 읽고, 동일 직원은 bulk 조회 결과로 SKIP하도록 조회 SQL을 줄입니다.
+
+원자료는 [`before JSON`](docs/performance/day12-before.json), [`after JSON`](docs/performance/day12-after.json), 구현별 표와 SQL 정의는 [`Before report`](docs/performance/day12-before.md), [`After report`](docs/performance/day12-after.md), 비교는 [`comparison`](docs/performance/day12-comparison.md)에 보관합니다. 실행 때마다 생성하는 `build/reports/performance/` 결과는 빌드 산출물로 무시하며, 이 테스트는 과거 산출물 파일을 읽지 않습니다.
+
+```powershell
+.\gradlew.bat performanceTest
+```
 로컬에서 예제 HR API를 사용하려면 애플리케이션을 시작할 때 다음 환경 변수를 설정합니다. Mock HR API는 기본적으로 비활성화되어 있습니다.
 
 ```powershell

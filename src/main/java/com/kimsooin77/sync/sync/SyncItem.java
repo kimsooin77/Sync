@@ -92,6 +92,10 @@ public class SyncItem {
                 job, rowNumber, employee.getEmployeeNo(), SyncItemResult.SKIPPED, null, null, employee);
     }
 
+    static SyncItem skipped(SyncJob job, int rowNumber, String employeeNo, Employee employeeReference) {
+        return new SyncItem(job, rowNumber, employeeNo, SyncItemResult.SKIPPED, null, null, employeeReference);
+    }
+
     static SyncItem failed(
             SyncJob job,
             int rowNumber,

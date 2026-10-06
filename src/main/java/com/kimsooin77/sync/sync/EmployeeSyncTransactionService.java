@@ -80,6 +80,15 @@ public class EmployeeSyncTransactionService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordSkipped(Long syncJobId, int rowNumber, String employeeNo, Long employeeId) {
+        Objects.requireNonNull(employeeNo, "employeeNo");
+        Objects.requireNonNull(employeeId, "employeeId");
+        SyncJob job = syncJobRepository.getReferenceById(syncJobId);
+        Employee employeeReference = employeeRepository.getReferenceById(employeeId);
+        syncItemRepository.saveAndFlush(SyncItem.skipped(job, rowNumber, employeeNo, employeeReference));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordNormalizationFailure(Long syncJobId, NormalizationResult.Failure failure) {
         Objects.requireNonNull(failure, "failure");
         SyncJob job = syncJobRepository.getReferenceById(syncJobId);

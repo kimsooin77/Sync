@@ -10,6 +10,7 @@ import com.kimsooin77.sync.sync.SyncJobRepository;
 import com.kimsooin77.sync.sync.SyncJobStatus;
 import com.kimsooin77.sync.sync.hr.HttpStubServer;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,12 +19,16 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -57,6 +62,9 @@ class SyncJobControllerIntegrationTest {
     @Autowired
     private IntegrationTaskRepository integrationTaskRepository;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @DynamicPropertySource
     static void configureHrClient(DynamicPropertyRegistry registry) {
         registry.add("app.hr.base-url", HR_SERVER::baseUrl);
@@ -69,12 +77,18 @@ class SyncJobControllerIntegrationTest {
 
     @BeforeEach
     void resetDatabaseAndHrResponse() {
+        dropSyncJobFailureTrigger();
         integrationTaskRepository.deleteAllInBatch();
         auditLogRepository.deleteAllInBatch();
         syncItemRepository.deleteAllInBatch();
         syncJobRepository.deleteAllInBatch();
         employeeRepository.deleteAllInBatch();
         HR_SERVER.respond(200, initialHrResponse());
+    }
+
+    @AfterEach
+    void cleanSyncJobFailureTrigger() {
+        dropSyncJobFailureTrigger();
     }
 
     @Test
@@ -120,6 +134,75 @@ class SyncJobControllerIntegrationTest {
         });
         assertThat(HR_SERVER.requestObserverFailure()).isNull();
         assertThat(employeeRepository.count()).isEqualTo(3);
+    }
+
+    @Test
+    void rejectsConcurrentSyncBeforeCreatingSecondJobAndAllowsNextRunAfterCompletion() throws Exception {
+        CountDownLatch hrRequestEntered = new CountDownLatch(1);
+        CountDownLatch releaseHrResponse = new CountDownLatch(1);
+        HR_SERVER.observeRequests(() -> {
+            hrRequestEntered.countDown();
+            try {
+                if (!releaseHrResponse.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("test did not release the HR response");
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+        });
+
+        CompletableFuture<ResponseEntity<SyncJobResponse>> firstRun = CompletableFuture.supplyAsync(this::createJob);
+        try {
+            assertThat(hrRequestEntered.await(5, TimeUnit.SECONDS)).isTrue();
+            ResponseEntity<String> rejected = httpClient().post().uri("/api/sync-jobs")
+                    .retrieve()
+                    .onStatus(status -> status.value() == HttpStatus.CONFLICT.value(), (request, response) -> { })
+                    .toEntity(String.class);
+
+            assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+            assertThat(rejected.getBody()).contains("SYNC_ALREADY_RUNNING");
+            assertThat(syncJobRepository.count()).isEqualTo(1);
+        } finally {
+            releaseHrResponse.countDown();
+        }
+
+        assertThat(firstRun.get(10, TimeUnit.SECONDS).getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(syncJobRepository.count()).isEqualTo(1);
+
+        HR_SERVER.respond(200, initialHrResponse());
+        ResponseEntity<SyncJobResponse> nextRun = createJob();
+        assertThat(nextRun.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(syncJobRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void releasesGuardWhenSyncJobCreationFailsBeforeHrCall() {
+        jdbcTemplate.execute("""
+                CREATE FUNCTION test_reject_sync_job_insert() RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'test rejects sync job creation' USING ERRCODE = '58000';
+                END;
+                $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER test_reject_sync_job_insert
+                BEFORE INSERT ON sync_job
+                FOR EACH ROW EXECUTE FUNCTION test_reject_sync_job_insert()
+                """);
+
+        ResponseEntity<String> failed = httpClient().post().uri("/api/sync-jobs").retrieve()
+                .onStatus(status -> status.is5xxServerError(), (request, response) -> { })
+                .toEntity(String.class);
+
+        assertThat(failed.getStatusCode().is5xxServerError()).isTrue();
+        assertThat(syncJobRepository.count()).isZero();
+        dropSyncJobFailureTrigger();
+
+        ResponseEntity<SyncJobResponse> nextRun = createJob();
+        assertThat(nextRun.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(syncJobRepository.count()).isEqualTo(1);
     }
 
     @Test
@@ -189,6 +272,11 @@ class SyncJobControllerIntegrationTest {
         });
         assertNoEmployeeResults();
         assertThat(syncJobRepository.count()).isEqualTo(1);
+
+        HR_SERVER.respond(200, initialHrResponse());
+        ResponseEntity<SyncJobResponse> nextRun = createJob();
+        assertThat(nextRun.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(nextRun.getBody().status()).isEqualTo(SyncJobStatus.COMPLETED);
     }
 
     @Test
@@ -241,6 +329,12 @@ class SyncJobControllerIntegrationTest {
         assertThat(syncItemRepository.count()).isZero();
         assertThat(auditLogRepository.count()).isZero();
         assertThat(integrationTaskRepository.count()).isZero();
+    }
+
+    private void dropSyncJobFailureTrigger() {
+        if (jdbcTemplate == null) return;
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS test_reject_sync_job_insert ON sync_job");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_reject_sync_job_insert()");
     }
 
     private RestClient httpClient() {
