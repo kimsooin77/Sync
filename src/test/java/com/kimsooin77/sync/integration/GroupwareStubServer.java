@@ -223,7 +223,7 @@ final class GroupwareStubServer {
         }
         HttpResponse<byte[]> response = proxyClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofByteArray());
         if (delayNextForwardedResponse.compareAndSet(true, false)) {
-            Thread.sleep(750);
+            Thread.sleep(1_500);
         }
         String responseContentType = response.headers().firstValue("Content-Type").orElse(null);
         if (responseContentType != null) {

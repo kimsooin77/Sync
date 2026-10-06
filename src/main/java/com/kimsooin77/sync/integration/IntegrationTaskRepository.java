@@ -10,8 +10,25 @@ import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
 import java.time.Instant;
+import org.springframework.data.domain.Page;
 
 public interface IntegrationTaskRepository extends JpaRepository<IntegrationTask, Long> {
+
+    @Query("select new com.kimsooin77.sync.integration.IntegrationTaskListRow(task.id, employee.employeeNo, "
+            + "task.action, task.status, task.retryCount, task.maxRetryCount, task.lastErrorCode, "
+            + "task.createdAt, task.updatedAt) from IntegrationTask task join task.employee employee "
+            + "where (:status is null or task.status = :status) and (:action is null or task.action = :action) "
+            + "and (:employeeNo is null or employee.employeeNo = :employeeNo)")
+    Page<IntegrationTaskListRow> search(@Param("status") IntegrationTaskStatus status,
+                                        @Param("action") IntegrationAction action,
+                                        @Param("employeeNo") String employeeNo, Pageable pageable);
+
+    @Query("select new com.kimsooin77.sync.integration.IntegrationTaskDetailRow(task.id, employee.employeeNo, "
+            + "task.target, task.action, task.status, task.payload, task.idempotencyKey, task.retryCount, "
+            + "task.maxRetryCount, task.nextRetryAt, task.processingStartedAt, task.lastErrorCode, "
+            + "task.lastErrorMessage, task.createdAt, task.updatedAt) from IntegrationTask task "
+            + "join task.employee employee where task.id = :id")
+    Optional<IntegrationTaskDetailRow> findDetailById(@Param("id") Long id);
 
     List<IntegrationTask> findAllByEmployee_IdOrderByIdAsc(Long employeeId);
 

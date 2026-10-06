@@ -11,7 +11,14 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+server:
+  servlet:
+    session:
+      timeout: 30m
 app:
+  admin:
+    username: ${ADMIN_USERNAME:}
+    password-hash: ${ADMIN_PASSWORD_HASH:}
   hr:
     base-url: ${HR_BASE_URL:http://localhost:8080}
     connect-timeout: ${HR_CONNECT_TIMEOUT:2s}

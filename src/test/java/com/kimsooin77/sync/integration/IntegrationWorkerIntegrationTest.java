@@ -1,6 +1,7 @@
 package com.kimsooin77.sync.integration;
 
 import com.kimsooin77.sync.audit.AuditLogRepository;
+import com.kimsooin77.sync.AdminHttpSession;
 import com.kimsooin77.sync.employee.EmployeeRepository;
 import com.kimsooin77.sync.employee.EmploymentStatus;
 import com.kimsooin77.sync.employee.PostgreSqlTestConfiguration;
@@ -43,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         properties = {
                 "app.integration.worker.enabled=false",
                 "app.mock.groupware.enabled=true",
-                "app.mock.groupware.timeout-delay-ms=600"
+                "app.mock.groupware.timeout-delay-ms=1500"
         })
 @Import({PostgreSqlTestConfiguration.class, IntegrationWorkerTestConfiguration.class})
 class IntegrationWorkerIntegrationTest {
@@ -53,7 +54,7 @@ class IntegrationWorkerIntegrationTest {
     @DynamicPropertySource
     static void groupwareBaseUrl(DynamicPropertyRegistry registry) {
         registry.add("app.groupware.base-url", GROUPWARE_STUB::baseUrl);
-        registry.add("app.groupware.read-timeout", () -> "300ms");
+        registry.add("app.groupware.read-timeout", () -> "1s");
     }
 
     @Autowired
@@ -941,7 +942,7 @@ class IntegrationWorkerIntegrationTest {
     }
 
     private RestClient localClient() {
-        return RestClient.builder().baseUrl("http://localhost:" + port).build();
+        return AdminHttpSession.login("http://localhost:" + port).client();
     }
 
     private CompletableFuture<Integer> retryStatus(Long taskId) {

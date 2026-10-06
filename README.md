@@ -120,6 +120,29 @@ PUT 본문은 다음과 같습니다.
 
 수동 재시도는 `retryCount`만 0으로 초기화하고 오류와 처리 시각을 지웁니다. payload, 멱등 key, maxRetryCount, 기존 Attempt는 유지합니다. 동시에 두 요청이 들어오면 작업 행 잠금으로 하나만 승인됩니다. 이미 저장된 Attempt가 있으면 이후 실제 HTTP 호출의 Attempt 번호는 기존 최댓값 다음 번호를 사용합니다.
 
+## 관리자 API와 로그인
+
+관리자 API는 세션 로그인과 CSRF 보호를 사용합니다. 애플리케이션을 시작하기 전에 관리자 한 명의 ADMIN_USERNAME과 BCrypt 형식의 ADMIN_PASSWORD_HASH를 환경변수로 지정해야 합니다. 값이 없거나 해시 형식이 잘못되면 시작이 실패하며 기본 계정은 생성하지 않습니다. 계정은 메모리에만 있으므로 데이터베이스 테이블이나 migration은 없습니다.
+
+세션은 기본 30분 동안 유지됩니다. 로그인은 Spring Security의 인증 관리자와 세션 고정 보호를 사용합니다. 로그인 전에는 GET /api/auth/csrf에서 CSRF token을 받고, token과 함께 POST /api/auth/login을 호출합니다. 로그인 성공 후 새 CSRF token을 다시 받아 상태 변경 요청마다 X-CSRF-TOKEN 헤더에 넣습니다. 로그아웃은 POST /api/auth/logout입니다. GET /api/auth/me는 현재 로그인한 관리자 이름을 반환합니다.
+
+관리자 데이터 조회 경로는 다음과 같습니다.
+
+```text
+GET /api/employees?keyword=&employmentStatus=&page=0&size=20
+GET /api/employees/{id}
+GET /api/employees/{id}/audit-logs?page=0&size=20
+GET /api/sync-jobs?status=&page=0&size=20
+GET /api/sync-jobs/{syncJobId}
+GET /api/integration-tasks?status=&action=&employeeNo=&page=0&size=20
+GET /api/integration-tasks/{id}
+GET /api/integration-tasks/{id}/attempts?page=0&size=20
+```
+
+목록 응답은 content, page, size, totalElements, totalPages를 포함합니다. page는 0부터 시작하고 size는 1부터 100까지 허용합니다. 상세 응답에서 저장된 Task payload나 AuditLog changes가 깨진 JSON이면 원문을 노출하지 않고 해당 값은 null, 파싱 오류 플래그는 true로 반환합니다.
+
+미인증 관리자 API는 JSON 401, 인증 후 CSRF token이 빠지거나 잘못된 상태 변경 요청은 JSON 403을 반환합니다. 개발 중 React와 API는 Vite proxy를 통해 같은 origin으로 연결하는 구성을 사용합니다. 별도의 cross-origin 쿠키나 CORS 설정은 구성하지 않습니다. 운영 환경도 same-origin으로 배포해야 합니다.
+
 `INTEGRATION_WORKER_RECOVERY_THRESHOLD`로 stale 기준을 바꿀 수 있으며 기본값은 60초입니다. PROCESSING 복구는 기존 최대 3회의 자동 재실행 예산에 포함됩니다. retryCount가 3인 stale Task는 추가 HTTP 호출 없이 `FAILED / PROCESSING_RECOVERY_EXHAUSTED`가 됩니다. 이 상태는 Groupware 업무 실패가 확인됐다는 뜻이 아니라 자동 처리 안에서 최종 결과를 확정할 수 없다는 뜻입니다. Mock 멱등 기록은 프로세스 재시작 뒤 사라지므로, 이 복구 시나리오는 Mock 상태를 유지한 채 Worker 프로세스 중단을 재현해야 검증할 수 있습니다. lease, 다중 Worker 경쟁 제어, 수동 재시도는 범위에 포함하지 않습니다.
 
 동기화 실행이 FAILED이면 실행 자체가 정상적으로 완료되지 못했다는 뜻입니다. 직원별 처리는 각각 커밋되므로 시스템 오류 전에 완료된 직원과 결과는 남을 수 있으며, FAILED가 전체 직원 처리를 원자적으로 롤백했다는 뜻은 아닙니다.

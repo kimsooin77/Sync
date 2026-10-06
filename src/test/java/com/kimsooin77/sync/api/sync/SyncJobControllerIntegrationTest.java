@@ -1,6 +1,7 @@
 package com.kimsooin77.sync.api.sync;
 
 import com.kimsooin77.sync.audit.AuditLogRepository;
+import com.kimsooin77.sync.AdminHttpSession;
 import com.kimsooin77.sync.employee.EmployeeRepository;
 import com.kimsooin77.sync.employee.PostgreSqlTestConfiguration;
 import com.kimsooin77.sync.integration.IntegrationTaskRepository;
@@ -123,9 +124,12 @@ class SyncJobControllerIntegrationTest {
 
     @Test
     void getReturnsNotFoundForUnknownSyncJob() {
-        ResponseEntity<SyncJobResponse> response = getJob(Long.MAX_VALUE);
+        ResponseEntity<String> response = httpClient().get().uri("/api/sync-jobs/{id}", Long.MAX_VALUE)
+                .retrieve().onStatus(status -> status.value() == HttpStatus.NOT_FOUND.value(),
+                        (request, failure) -> { }).toEntity(String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).contains("SYNC_JOB_NOT_FOUND");
         assertThat(employeeRepository.count()).isZero();
         assertThat(syncItemRepository.count()).isZero();
     }
@@ -240,7 +244,7 @@ class SyncJobControllerIntegrationTest {
     }
 
     private RestClient httpClient() {
-        return RestClient.builder().baseUrl("http://localhost:" + port).build();
+        return AdminHttpSession.login("http://localhost:" + port).client();
     }
 
     private static String initialHrResponse() {
