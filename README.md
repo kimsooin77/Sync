@@ -1,6 +1,6 @@
 # Employee Lifecycle Sync
 
-[![CI](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml/badge.svg?branch=local)](https://github.com/kimsooin77/Sync/actions/runs/37574902268)
+[![CI](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml/badge.svg?branch=local)](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml)
 
 ## 1. 프로젝트 소개
 
@@ -241,9 +241,9 @@ Mock HR·Groupware와 Worker는 Compose 데모에서 활성화됩니다. 실제 
 | Performance `performanceTest` | 이번 최종화에서는 재실행하지 않음. 기준 측정 자료는 `docs/performance/day12-comparison.md`에 기록 |
 | Docker image build | `docker build --tag employee-lifecycle-sync:day14 .` 성공 |
 | Docker Compose 기동 및 health check | 임시 격리 project에서 DB healthy, 앱 `/actuator/health` HTTP 200; 검증 후 컨테이너 정리 |
-| GitHub Actions | [run 37574902268](https://github.com/kimsooin77/Sync/actions/runs/37574902268) 성공: frontend, backend 100 tests, Docker image build 통과 |
+| GitHub Actions | [run 37605939900](https://github.com/kimsooin77/Sync/actions/runs/37605939900) 성공 (`33bac890`): frontend, backend 100 tests, Docker image build 통과 |
 
-이전 [run 37572932660](https://github.com/kimsooin77/Sync/actions/runs/37572932660)은 frontend 검증 뒤 backend 시작 단계에서 exit code 126으로 실패했고 Docker image 단계는 skip됐습니다. 원인은 workflow가 `./gradlew`로 실행하는 wrapper의 Git 모드가 `100644`였던 점입니다. [commit f4b65c3f1fe9ac31df1e0346cb0625dd45d2ff47의 run 37574902268](https://github.com/kimsooin77/Sync/actions/runs/37574902268)은 wrapper 모드를 `100755`로 수정한 뒤 frontend 테스트/build, backend clean build와 100개 테스트, Docker image build까지 모두 통과했습니다. workflow에는 자동 배포 단계가 없습니다.
+이전 [run 37572932660](https://github.com/kimsooin77/Sync/actions/runs/37572932660)은 frontend 검증 뒤 backend 시작 단계에서 exit code 126으로 실패했고 Docker image 단계는 skip됐습니다. 원인은 workflow가 `./gradlew`로 실행하는 wrapper의 Git 모드가 `100644`였던 점입니다. [run 37574902268](https://github.com/kimsooin77/Sync/actions/runs/37574902268)에서 wrapper 모드를 `100755`로 수정해 전체 검증을 통과했습니다. 이후 [run 37575281401](https://github.com/kimsooin77/Sync/actions/runs/37575281401)에서 관리자 동기화 테스트가 시나리오 로딩 중 비활성 버튼을 클릭하는 race로 실패했습니다. 테스트가 시나리오 응답과 버튼 활성화를 기다리도록 수정한 [run 37605939900](https://github.com/kimsooin77/Sync/actions/runs/37605939900)은 frontend 테스트/build, backend clean build와 100개 테스트, Docker image build까지 모두 통과했습니다. workflow에는 자동 배포 단계가 없습니다.
 
 ## 13. 현재 한계
 
