@@ -1,5 +1,7 @@
 # Employee Lifecycle Sync
 
+[![CI](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml/badge.svg?branch=local)](https://github.com/kimsooin77/Sync/actions/runs/37574902268)
+
 ## 1. 프로젝트 소개
 
 HR 직원 정보를 내부 DB에 반영하고, 직원 상태·부서 변화에 따른 그룹웨어 계정 변경 작업과 실패 이력·재처리를 관리하는 시스템입니다.
@@ -239,9 +241,9 @@ Mock HR·Groupware와 Worker는 Compose 데모에서 활성화됩니다. 실제 
 | Performance `performanceTest` | 이번 최종화에서는 재실행하지 않음. 기준 측정 자료는 `docs/performance/day12-comparison.md`에 기록 |
 | Docker image build | `docker build --tag employee-lifecycle-sync:day14 .` 성공 |
 | Docker Compose 기동 및 health check | 임시 격리 project에서 DB healthy, 앱 `/actuator/health` HTTP 200; 검증 후 컨테이너 정리 |
-| GitHub Actions | run 37572932660: frontend 통과, backend가 시작 시 exit code 126으로 실패, Docker image 단계는 skip. 성공 재실행은 아직 없음 |
+| GitHub Actions | [run 37574902268](https://github.com/kimsooin77/Sync/actions/runs/37574902268) 성공: frontend, backend 100 tests, Docker image build 통과 |
 
-확인된 CI 실패 원인은 해당 run의 `./gradlew` 실행 권한입니다. 저장소 인덱스의 기존 파일 모드는 `100644`였고 workflow는 실행 파일로 직접 호출합니다. 실행 권한 수정 뒤의 GitHub Actions 결과는 push 전이라 아직 확인하지 않았습니다. CI 성공 badge는 추가하지 않았습니다. 실패 run의 상세 로그는 GitHub API에서 권한 제한으로 가져오지 못했으며, 공개된 job annotation과 exit code를 근거로 기록했습니다.
+이전 [run 37572932660](https://github.com/kimsooin77/Sync/actions/runs/37572932660)은 frontend 검증 뒤 backend 시작 단계에서 exit code 126으로 실패했고 Docker image 단계는 skip됐습니다. 원인은 workflow가 `./gradlew`로 실행하는 wrapper의 Git 모드가 `100644`였던 점입니다. [commit f4b65c3f1fe9ac31df1e0346cb0625dd45d2ff47의 run 37574902268](https://github.com/kimsooin77/Sync/actions/runs/37574902268)은 wrapper 모드를 `100755`로 수정한 뒤 frontend 테스트/build, backend clean build와 100개 테스트, Docker image build까지 모두 통과했습니다. workflow에는 자동 배포 단계가 없습니다.
 
 ## 13. 현재 한계
 
