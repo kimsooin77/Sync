@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { App } from './App';
@@ -50,10 +50,12 @@ describe('administrator session and dashboard', () => {
   it('does not replay a mutation automatically after a CSRF 403', async () => {
     let syncCount = 0;
     let csrfCalls = 0;
+    let resolveScenario!: (response: Response) => void;
+    const scenarioResponse = new Promise<Response>((resolve) => { resolveScenario = resolve; });
     stubFetch((url, init) => {
       if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
       if (url.startsWith('/api/sync-jobs') && init.method !== 'POST') return jsonResponse({ content: [], page: 0, size: 8, totalElements: 0, totalPages: 0 });
-      if (url === '/mock/hr/scenario') return jsonResponse({ scenario: 'initial' });
+      if (url === '/mock/hr/scenario') return scenarioResponse;
       if (url === '/api/auth/csrf') { csrfCalls++; return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'fresh' }); }
       if (url === '/api/sync-jobs' && init.method === 'POST') { syncCount++; return jsonResponse({ code: 'CSRF_INVALID', message: '토큰 확인 필요' }, 403); }
       throw new Error(`Unexpected ${url}`);
@@ -61,7 +63,10 @@ describe('administrator session and dashboard', () => {
     render(<BrowserRouter><AuthProvider><App /></AuthProvider></BrowserRouter>);
     const button = await screen.findByRole('button', { name: /HR 동기화 시작/ });
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/auth/csrf', expect.anything()));
-    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    resolveScenario(jsonResponse({ scenario: 'initial' }));
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.setup().click(button);
     await waitFor(() => expect(syncCount).toBe(1));
     await screen.findByRole('alert');
     await waitFor(() => expect(csrfCalls).toBe(2));
