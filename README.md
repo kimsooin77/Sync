@@ -8,13 +8,17 @@
 - Docker Compose 지원 Docker 엔진
 - 별도 Gradle 설치는 필요하지 않습니다. 프로젝트에 포함된 Gradle Wrapper를 사용합니다.
 
+Docker 실행, production profile, 세션 cookie, health check, Swagger, 환경변수와 CI 구성은 [배포 안내](docs/deployment.md)를 참고하세요. Day 13에서 추가한 GitHub Actions workflow는 실제 저장소 push 후 실행 결과를 확인해야 합니다.
+
 ## 데이터베이스 시작
+
+먼저 `.env.example`을 `.env`로 복사하고 `POSTGRES_PASSWORD`와 `DB_PASSWORD`에 같은 로컬 값을 지정합니다. `.env`는 Git에서 제외됩니다. 전체 앱·DB 실행 방법은 [배포 안내](docs/deployment.md)를 참고하세요.
 
 ```powershell
 docker compose up -d db
 ```
 
-애플리케이션은 기본적으로 `localhost:5432`의 `employee_lifecycle_sync` 데이터베이스에 연결합니다. 접속 정보는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수로 바꿀 수 있습니다. Compose 기본 계정은 로컬 개발용입니다.
+애플리케이션은 기본적으로 `localhost:5432`의 `employee_lifecycle_sync` 데이터베이스에 연결합니다. 접속 정보는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수로 바꿀 수 있습니다.
 
 데이터베이스를 중지하려면 다음을 실행합니다.
 
@@ -28,19 +32,15 @@ Windows PowerShell:
 
 ```powershell
 .\gradlew.bat clean build
-.\gradlew.bat test
-.\gradlew.bat bootRun
 ```
 
 macOS 또는 Linux:
 
 ```sh
 ./gradlew clean build
-./gradlew test
-./gradlew bootRun
 ```
 
-`bootRun`은 기본 포트 8080에서 애플리케이션을 시작합니다. `test`는 PostgreSQL 17.11 Testcontainers를 사용하므로 Docker 엔진이 실행 중이어야 합니다.
+일반 Gradle 빌드는 frontend dependency 설치·테스트·production build를 수행하고 React 파일을 실행 가능한 JAR에 포함합니다. `clean build`에는 backend 테스트도 포함되며 PostgreSQL 17.11 Testcontainers를 사용하므로 Docker 엔진이 실행 중이어야 합니다. 로컬 실행과 관리자 환경변수 설정은 [배포 안내](docs/deployment.md)를 참고하세요.
 
 ## HR 동기화 API
 

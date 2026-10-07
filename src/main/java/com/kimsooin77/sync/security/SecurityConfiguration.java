@@ -60,6 +60,28 @@ public class SecurityConfiguration {
                                         "/mock/groupware/accounts/{employeeNo}/disable")))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/csrf", "/api/auth/login").permitAll()
+                        .requestMatchers(
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/login"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/login"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/employees"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/employees"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/integrations"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/integrations"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/index.html"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/index.html"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/assets/**"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/assets/**"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/favicon.svg"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/favicon.svg"))
+                        .permitAll()
+                        .requestMatchers(
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET, "/actuator/health"),
+                                PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.HEAD, "/actuator/health"))
+                        .permitAll()
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**")
+                        .hasRole("ADMIN")
                         .requestMatchers("/mock/hr/scenario").hasRole("ADMIN")
                         .requestMatchers(
                                 PathPatternRequestMatcher.withDefaults().matcher(org.springframework.http.HttpMethod.GET,

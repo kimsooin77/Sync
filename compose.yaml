@@ -1,19 +1,36 @@
 services:
   db:
     image: postgres:17.11
-    environment:
-      POSTGRES_DB: employee_lifecycle_sync
-      POSTGRES_USER: employee_sync
-      POSTGRES_PASSWORD: employee_sync_local
+    env_file:
+      - .env
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - employee-lifecycle-sync-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U employee_sync -d employee_lifecycle_sync"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/employee_lifecycle_sync
+      SERVER_PORT: "8080"
+      SERVER_SERVLET_SESSION_COOKIE_SECURE: "false"
+      HR_BASE_URL: http://app:8080
+      GROUPWARE_BASE_URL: http://app:8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   employee-lifecycle-sync-postgres:

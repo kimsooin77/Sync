@@ -1,0 +1,35 @@
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+server:
+  error:
+    include-exception: false
+    include-message: never
+    include-stacktrace: never
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        secure: true
+        http-only: true
+        same-site: lax
+app:
+  admin:
+    username: ${ADMIN_USERNAME}
+    password-hash: ${ADMIN_PASSWORD_HASH}
+  mock:
+    hr:
+      enabled: ${MOCK_HR_ENABLED:false}
+    groupware:
+      enabled: ${MOCK_GROUPWARE_ENABLED:false}
+  integration:
+    worker:
+      enabled: ${INTEGRATION_WORKER_ENABLED:false}
