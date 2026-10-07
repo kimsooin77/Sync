@@ -74,4 +74,4 @@ ADMIN_PASSWORD_HASH
 
 ## GitHub Actions
 
-`.github/workflows/ci.yml`은 pull request와 `local`, `develop`, `main` push에서 Java 21 및 Node 24 설정, `npm ci`, frontend 테스트/build, Testcontainers를 포함한 Gradle `clean build`, Docker image build 순으로 실행합니다. 별도 PostgreSQL service와 자동 배포는 없습니다. 현재 workflow 파일은 저장소에 추가되어 있지만 실제 GitHub Actions 실행 결과는 아직 확인하지 않았습니다.
+`.github/workflows/ci.yml`은 pull request와 `local`, `develop`, `main` push에서 Java 21 및 Node 24 설정, `npm ci`, frontend 테스트/build, Testcontainers를 포함한 Gradle `clean build`, Docker image build 순으로 실행합니다. 별도 PostgreSQL service와 자동 배포는 없습니다. 확인한 GitHub Actions run 37572932660에서는 frontend 검증이 통과했고, backend build가 시작 시 exit code 126으로 실패해 Docker image 단계는 skip됐습니다. 원인은 workflow가 `./gradlew`로 실행하는 wrapper의 Git 모드가 `100644`였던 점입니다. wrapper 모드를 `100755`로 수정했지만 이 수정은 아직 push하지 않았으므로 GitHub Actions 재실행 성공은 확인되지 않았습니다.
