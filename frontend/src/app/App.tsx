@@ -35,6 +35,7 @@ function Shell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [busy, setBusy] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   async function signOut() {
     if (busy) return;
     setBusy(true); clearError();
@@ -42,18 +43,24 @@ function Shell() {
     catch (failure) { if (failure instanceof ApiError && failure.status === 401) navigate('/login', { replace: true }); }
     finally { setBusy(false); }
   }
-  return <div className="app-shell">
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark small-mark">ES</span><span>People Ops<small>SYNC CONSOLE</small></span></div>
-      <nav aria-label="주 메뉴">
-        <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}><span>▦</span> 대시보드</NavLink>
-        <NavLink to="/employees" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}><span>♙</span> 직원</NavLink>
-        <NavLink to="/integrations" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}><span>⇄</span> 외부 연계</NavLink>
+  return <div className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+    <aside className="sidebar" data-testid="app-sidebar">
+      <div className="brand">
+        <span className="brand-mark small-mark">ES</span>
+        <span className="brand-label">People Ops<small>SYNC CONSOLE</small></span>
+        <button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? '메뉴 펼치기' : '메뉴 접기'} title={sidebarCollapsed ? '메뉴 펼치기' : '메뉴 접기'} aria-expanded={!sidebarCollapsed} aria-controls="primary-navigation" onClick={() => setSidebarCollapsed((value) => !value)}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+        </button>
+      </div>
+      <nav id="primary-navigation" aria-label="주 메뉴">
+        <NavLink to="/" end aria-label="대시보드" title="대시보드" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}><span className="nav-icon" aria-hidden="true">▦</span><span className="nav-label">대시보드</span></NavLink>
+        <NavLink to="/employees" aria-label="직원 목록" title="직원 목록" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}><span className="nav-icon" aria-hidden="true">♙</span><span className="nav-label">직원 목록</span></NavLink>
+        <NavLink to="/integrations" aria-label="외부 연계" title="외부 연계" className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}><span className="nav-icon" aria-hidden="true">⇄</span><span className="nav-label">외부 연계</span></NavLink>
       </nav>
-      <div className="sidebar-note"><span className="status-dot" /> 시스템 관리 콘솔</div>
+      <div className="sidebar-note"><span className="status-dot" /><span className="sidebar-note-label">시스템 관리</span></div>
     </aside>
     <section className="main-frame">
-      <header className="topbar"><div><span className="crumb">관리자</span><span className="crumb-sep">/</span><span>{location.pathname === '/' ? '대시보드' : location.pathname === '/employees' ? '직원' : '외부 연계'}</span></div>
+      <header className="topbar"><div><span className="crumb">관리자</span><span className="crumb-sep">/</span><span>{location.pathname === '/' ? '대시보드' : location.pathname === '/employees' ? '직원' : '외부 계정'}</span></div>
         <div className="user-menu"><span className="avatar">{user?.username.slice(0, 1).toUpperCase()}</span><span>{user?.username}</span><button className="text-button" disabled={busy} onClick={signOut}>로그아웃</button></div>
       </header>
       {error && <div className="global-error" role="alert">{error}<button onClick={clearError} aria-label="오류 닫기">×</button></div>}
@@ -63,7 +70,7 @@ function Shell() {
         <Route path="/integrations" element={<IntegrationsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes></main>
-      <footer className="footer">Employee Lifecycle Sync <span>관리자 콘솔 · same-origin session</span></footer>
+      <footer className="footer">Employee Lifecycle Sync <span>직원 정보 동기화 · 관리자 화면</span></footer>
     </section>
   </div>;
 }

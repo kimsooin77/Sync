@@ -3,8 +3,8 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 
-export function providers(children: ReactNode) {
-  return <MemoryRouter><AuthProvider>{children}</AuthProvider></MemoryRouter>;
+export function providers(children: ReactNode, initialPath = '/') {
+  return <MemoryRouter initialEntries={[initialPath]}><AuthProvider>{children}</AuthProvider></MemoryRouter>;
 }
 export function jsonResponse(body: unknown, status = 200) {
   return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
