@@ -24,7 +24,8 @@ export async function request<T>(path: string, options: RequestOptions = {}, onU
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       credentials: 'same-origin',
     });
-  } catch {
+  } catch (failure) {
+    if (failure instanceof DOMException && failure.name === 'AbortError') throw failure;
     throw new ApiError(0, 'NETWORK_ERROR', '서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.');
   }
   if (response.status === 401) onUnauthorized?.();
