@@ -1,77 +1,93 @@
-# 로컬 배포와 운영 설정
+﻿# AWS 배포 준비 (초안)
 
-이 배포는 React 파일을 Spring Boot JAR에서 제공하는 same-origin 단일 애플리케이션과 PostgreSQL 17.11로 구성됩니다. 애플리케이션은 단일 인스턴스로 운영합니다. Session, HR Sync 실행 guard, Mock Groupware 계정과 멱등 기록은 애플리케이션 메모리에 있으므로 다중 인스턴스 구성은 지원하지 않습니다.
+> 상태: 로컬 배포 산출물 준비 단계입니다. AWS 리소스를 생성하거나 실제 배포를 검증하지 않았습니다. 아래 내용은 구성 계획이며 운영 성공을 의미하지 않습니다.
 
-## 로컬 Docker Compose
+## 목표 구성
 
-1. `.env.example`을 `.env`로 복사합니다.
-2. `POSTGRES_PASSWORD`와 `DB_PASSWORD`에 같은 임의의 로컬 값을 넣습니다.
-3. `ADMIN_USERNAME`과 `ADMIN_PASSWORD_HASH`를 직접 설정합니다. 해시는 본인이 선택한 로컬 데모 비밀번호로 생성한 BCrypt 값이어야 합니다.
-4. 실행합니다.
+- Region: Stockholm, eu-north-1
+- Application: 단일 인스턴스 Elastic Beanstalk Docker 환경
+- Runtime image: Java 21 JRE Alpine, 미리 빌드한 Spring Boot executable JAR
+- Database: private RDS for PostgreSQL 17, Single-AZ
+- HTTPS: CloudFront를 Elastic Beanstalk HTTP origin 앞에 둡니다.
+- 애플리케이션과 Mock HR/Groupware는 같은 Spring Boot 프로세스에서 실행합니다. 기본 내부 호출 주소는 127.0.0.1과 앱 포트를 사용합니다.
 
-```powershell
-docker compose up --build -d
-docker compose ps
-```
+현재 애플리케이션은 Session, 동기화 실행 guard, Mock Groupware 계정과 멱등 기록 일부를 메모리에 보관합니다. 따라서 최초 배포는 Elastic Beanstalk 인스턴스 한 대로 제한합니다. 인스턴스 교체나 애플리케이션 재시작 시 메모리 상태가 사라질 수 있습니다.
 
-로컬 Compose는 HTTP이므로 앱 컨테이너에만 `SERVER_SERVLET_SESSION_COOKIE_SECURE=false`를 설정합니다. 운영 기본값은 Secure=true입니다. 포트는 로컬 루프백에만 바인딩됩니다. DB 데이터는 `employee-lifecycle-sync-postgres` named volume에 보관됩니다.
+## 로컬 AWS bundle 생성
 
-관리 화면은 `http://localhost:8080/`에서 엽니다. `/login`, `/employees`, `/integrations`도 직접 열거나 새로고침할 수 있습니다. `/actuator/health`는 외부에서 `UP` 또는 `DOWN`만 반환합니다.
+Windows PowerShell에서 저장소 루트 기준으로 실행합니다.
 
-OpenAPI는 기본 비활성화입니다. 데모에서 문서를 켜려면 `.env`에 `OPENAPI_ENABLED=true`를 설정하고 컨테이너를 재생성합니다. Swagger와 `/v3/api-docs`는 관리자 로그인 없이 접근할 수 없습니다. CSRF를 해제하거나 인증을 우회하지 않습니다.
+    .\scripts\New-AwsBundle.ps1
 
-정지할 때는 volume을 보존합니다.
+스크립트는 다음을 실행하고 확인합니다.
 
-```powershell
-docker compose down
-```
+1. frontend에서 npm ci, npm test, npm run build
+2. 빌드된 frontend/dist를 전달해 gradlew.bat clean build 실행
+3. 실행 가능한 bootJar가 하나인지 확인
+4. JAR에 BOOT-INF/classes/static/index.html, 정적 asset, Flyway V1/V6 migration이 있는지 확인
+5. build/aws-bundle/에 Dockerfile과 application.jar만 복사
+6. build/aws-bundle.zip 안에도 두 파일만 있는지, Dockerfile 내용과 JAR 크기가 검증한 산출물과 일치하는지 확인
 
-`down -v`는 실행하지 마세요. named volume을 삭제합니다.
+이미 검증된 JAR로 bundle만 다시 만들 때는 다음을 사용합니다. -SkipBuild를 사용해도 JAR의 정적 파일과 migration 검사는 생략되지 않습니다.
 
-## Compose의 BCrypt 값
+    .\scripts\New-AwsBundle.ps1 -SkipBuild
 
-`.env`의 `ADMIN_PASSWORD_HASH` 값은 Compose env file에서 작은따옴표로 감쌉니다. 예를 들어 실제 해시를 작은따옴표 안에 그대로 넣습니다. Compose가 이를 컨테이너에 전달할 때 `$` 문자를 보존하는지 로컬 검증에서 확인한 뒤 이 사용법을 문서화했습니다. `.env.example`에는 실제 해시나 비밀번호가 없습니다.
+업로드 전에 ZIP의 raw entry 이름이 루트의 Dockerfile과 application.jar 두 개뿐인지 따로 확인할 수 있습니다.
 
-## 일반 Gradle 빌드
+    .\scripts\Test-AwsBundle.ps1
 
-```powershell
-.\gradlew.bat clean build
-```
+Bundle에는 소스 코드, .env, secret, Compose 파일, 테스트 결과, Node modules, Gradle cache가 포함되지 않습니다. ZIP을 AWS에 올리기 전에 파일 목록을 직접 확인합니다.
 
-Gradle은 frontend에서 `npm ci` → `npm test` → `npm run build`를 한 번 실행합니다. `frontend/dist`에 결과를 만들고, 이 결과를 JAR의 `BOOT-INF/classes/static/`에 넣습니다. 출력 디렉터리가 없으면 `bootJar`를 실패시킵니다. `dist`는 Git에 포함하지 않습니다.
+## 환경변수
 
-이미 만들어진 frontend 결과를 전달할 때는 다음처럼 빌드합니다.
+실제 값은 AWS 환경변수/secret 설정에 직접 입력합니다. Git, README, .env.example, 배포 bundle에 비밀번호나 BCrypt hash를 기록하지 않습니다.
 
-```powershell
-.\gradlew.bat clean build -PfrontendDistDir=frontend/dist
-```
+필수 항목:
 
-이 옵션을 사용하면 Gradle은 React를 다시 빌드하지 않고 전달된 `index.html`을 확인한 뒤 JAR에 포함합니다.
+- SPRING_PROFILES_ACTIVE=prod
+- DB_URL (RDS endpoint와 database 이름을 사용하는 JDBC URL)
+- DB_USERNAME
+- DB_PASSWORD
+- ADMIN_USERNAME
+- ADMIN_PASSWORD_HASH (유효한 BCrypt hash)
 
-## Docker 이미지
+PORT가 있으면 Spring Boot가 사용하고, 없으면 SERVER_PORT, 이후 8080을 사용합니다. HR_BASE_URL과 GROUPWARE_BASE_URL은 기본적으로 현재 컨테이너의 loopback과 앱 포트를 가리킵니다. 별도 외부 서비스가 필요하다는 검증된 이유가 생기지 않으면 public domain을 통한 자기 호출을 설정하지 않습니다.
 
-`Dockerfile`은 Node 24에서 dependency 설치·frontend 테스트·build를 한 번 수행합니다. Java 21 JDK 단계는 그 `dist`를 Gradle에 전달하고 `bootJar`만 만듭니다. Java 21 JRE 단계에는 JAR만 복사하며 non-root `app` 사용자로 실행합니다. Docker 빌드는 Testcontainers 테스트를 다시 실행하지 않습니다.
+운영 cookie는 HTTPS 전제의 Secure=true, HttpOnly=true, SameSite=Lax 설정을 유지합니다. 로컬 Compose용 Secure override를 AWS에 복사하지 않습니다.
 
-## 운영 배포 환경변수
+## 네트워크 및 데이터베이스 계획
 
-운영자는 secret store에서 값을 주입하고 `SPRING_PROFILES_ACTIVE=prod`로 실행해야 합니다.
+- EB EC2와 RDS는 같은 VPC에 둡니다.
+- RDS는 Publicly accessible=false로 설정합니다.
+- RDS Security Group의 TCP 5432 인바운드는 EB EC2 Security Group만 source로 허용합니다.
+- 0.0.0.0/0에서 PostgreSQL 접속을 허용하지 않습니다.
+- schema는 Flyway가 생성하고 Hibernate는 ddl-auto=validate로 동작합니다. AWS Console이나 DBeaver에서 테이블을 수동 생성하지 않습니다.
+- 기존 로컬 Compose volume은 AWS 준비 과정에서 삭제하거나 초기화하지 않습니다.
 
-필수 설정:
+## HTTPS와 CloudFront 계획
 
-```text
-DB_URL
-DB_USERNAME
-DB_PASSWORD
-ADMIN_USERNAME
-ADMIN_PASSWORD_HASH
-```
+CloudFront에서 viewer HTTPS를 강제하고, cache는 비활성화합니다. Session/CSRF 흐름에 필요한 cookie, query string, header를 origin까지 전달하도록 설정합니다. 로그인, CSRF, 새로고침, API 응답을 실제로 확인하기 전에는 CloudFront 구성이 검증됐다고 간주하지 않습니다.
 
-연동 주소와 timeout은 환경에 맞게 지정합니다. `MOCK_HR_ENABLED`, `MOCK_GROUPWARE_ENABLED`, `INTEGRATION_WORKER_ENABLED`, `OPENAPI_ENABLED`는 기본적으로 false입니다. 운영에서 Mock이나 OpenAPI를 켤 때는 사용 목적과 접근 경로를 확인해야 합니다.
+CloudFront를 사용해도 EB 원본 주소가 기본적으로 비공개가 되는 것은 아닙니다. origin 직접 접근 제한은 별도로 검토해야 합니다. 현재 설계에서는 이를 해결했다고 주장하지 않습니다.
 
-운영 cookie 기본값은 Secure=true, HttpOnly=true, SameSite=Lax입니다. HTTPS 종단이 외부 proxy에 있는 경우에도 브라우저에서 HTTPS same-origin으로 접근하도록 구성합니다. 이 프로젝트는 cross-origin 쿠키나 CORS 배포를 설정하지 않습니다.
+## 비용 승인 경계
 
-오직 `/actuator/health`만 노출합니다. DB가 정상일 때 200과 `status=UP`, DB 장애일 때 503과 `status=DOWN`을 반환하고 상세 정보를 숨깁니다. 그 밖의 Actuator endpoint는 웹에 노출하지 않습니다.
+Elastic Beanstalk 자체 요금이 없더라도 EC2, EBS, 공인 IPv4, RDS, 스토리지/백업, 데이터 전송 및 CloudFront에서 비용이 생길 수 있습니다. 실제 비용은 계정의 Free Plan/credit 상태와 리전별 선택 항목을 AWS Billing 및 Pricing Calculator에서 확인해야 합니다.
 
-## GitHub Actions
+유료 플랜 선택, 결제, 비용이 발생하는 AWS 리소스 생성 단계에 도달하면 작업을 멈추고 비용과 해당 단계의 결과를 확인받습니다. 이 문서는 비용 견적이나 무료 운영 보장을 제공하지 않습니다.
 
-`.github/workflows/ci.yml`은 pull request와 `local`, `develop`, `main` push에서 Java 21 및 Node 24 설정, `npm ci`, frontend 테스트/build, Testcontainers를 포함한 Gradle `clean build`, Docker image build 순으로 실행합니다. 별도 PostgreSQL service와 자동 배포는 없습니다. 이전 [run 37572932660](https://github.com/kimsooin77/Sync/actions/runs/37572932660)은 frontend 검증 뒤 backend 시작 단계에서 exit code 126으로 실패하고 Docker image 단계는 skip됐습니다. 원인은 workflow가 `./gradlew`로 실행하는 wrapper의 Git 모드가 `100644`였던 점입니다. [commit f4b65c3f1fe9ac31df1e0346cb0625dd45d2ff47의 run 37574902268](https://github.com/kimsooin77/Sync/actions/runs/37574902268)은 모드를 `100755`로 수정한 뒤 frontend, backend clean build와 테스트, Docker image build까지 성공했습니다.
+## 배포 완료 전 검증 항목
+
+아래는 실제 AWS 배포 뒤 확인할 항목입니다. 현재는 미검증입니다.
+
+- EB 환경 health와 앱 시작 로그
+- Flyway migration 적용, RDS 연결 및 재기동 뒤 DB 데이터 유지
+- CloudFront HTTPS와 SPA 직접 접근/새로고침
+- 없는 asset 경로가 index.html로 응답하지 않음
+- 로그인, Session cookie, CSRF 보호
+- /actuator/health 응답에 상세 정보가 노출되지 않음
+- HR sync, 자동 Retry, FAILED와 수동 Retry
+- 애플리케이션만 재배포한 뒤 RDS 데이터 유지 및 메모리 상태 초기화
+- 실제 AWS 사용량과 남은 credit
+
+Git merge, branch 변경, commit/push는 별도 요청 전까지 하지 않습니다.

@@ -12,6 +12,7 @@ spring:
   flyway:
     enabled: true
 server:
+  port: ${PORT:${SERVER_PORT:8080}}
   servlet:
     session:
       timeout: 30m
@@ -38,11 +39,11 @@ app:
     username: ${ADMIN_USERNAME:}
     password-hash: ${ADMIN_PASSWORD_HASH:}
   hr:
-    base-url: ${HR_BASE_URL:http://localhost:8080}
+    base-url: ${HR_BASE_URL:http://127.0.0.1:${server.port:8080}}
     connect-timeout: ${HR_CONNECT_TIMEOUT:2s}
     read-timeout: ${HR_READ_TIMEOUT:5s}
   groupware:
-    base-url: ${GROUPWARE_BASE_URL:http://localhost:${server.port:8080}}
+    base-url: ${GROUPWARE_BASE_URL:http://127.0.0.1:${server.port:8080}}
     connect-timeout: ${GROUPWARE_CONNECT_TIMEOUT:2s}
     read-timeout: ${GROUPWARE_READ_TIMEOUT:5s}
   integration:
