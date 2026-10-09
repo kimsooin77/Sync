@@ -17,7 +17,7 @@ if (-not (Test-Path -LiteralPath $awsDockerfile -PathType Leaf)) {
 }
 
 if (-not $SkipBuild) {
-    $stagingRoot = Join-Path $env:TEMP ("employee-sync-aws-build-" + [guid]::NewGuid().ToString('N'))
+    $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("employee-sync-aws-build-" + [guid]::NewGuid().ToString('N'))
     $frontendStagingDirectory = Join-Path $stagingRoot 'frontend'
     $repositoryStagingDirectory = Join-Path $stagingRoot 'repository'
     New-Item -ItemType Directory -Path $frontendStagingDirectory,$repositoryStagingDirectory -Force | Out-Null
@@ -38,17 +38,23 @@ if (-not $SkipBuild) {
 
         $frontendDist = Join-Path $frontendStagingDirectory 'dist'
         Push-Location $frontendStagingDirectory
-        & npm.cmd ci
+        $npmCommand = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
+        & $npmCommand ci
         if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
-        & npm.cmd test
+        & $npmCommand test
         if ($LASTEXITCODE -ne 0) { throw "frontend tests failed with exit code $LASTEXITCODE" }
-        & npm.cmd run build
+        & $npmCommand run build
         if ($LASTEXITCODE -ne 0) { throw "frontend build failed with exit code $LASTEXITCODE" }
         Pop-Location
 
-        $gradleWrapper = Join-Path $repositoryStagingDirectory 'gradlew.bat'
+        $gradleWrapperName = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'gradlew.bat' } else { 'gradlew' }
+        $gradleWrapper = Join-Path $repositoryStagingDirectory $gradleWrapperName
         if (-not (Test-Path -LiteralPath $gradleWrapper -PathType Leaf)) {
             throw "Gradle wrapper not found: $gradleWrapper"
+        }
+        if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) {
+            & chmod +x $gradleWrapper
+            if ($LASTEXITCODE -ne 0) { throw "Could not make Gradle wrapper executable: $LASTEXITCODE" }
         }
 
         Push-Location $repositoryStagingDirectory
@@ -103,8 +109,10 @@ foreach ($migration in @('V1__', 'V6__')) {
 }
 
 New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
-$resolvedBuild = (Resolve-Path -LiteralPath $buildDirectory).Path.TrimEnd('\') + '\'
-if ($bundleDirectory.StartsWith($resolvedBuild, [System.StringComparison]::OrdinalIgnoreCase)) {
+$pathComparison = if ($IsWindows -or $env:OS -eq 'Windows_NT') { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+$resolvedBuild = (Resolve-Path -LiteralPath $buildDirectory).Path.TrimEnd([char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)) + [System.IO.Path]::DirectorySeparatorChar
+$resolvedBundleDirectory = [System.IO.Path]::GetFullPath($bundleDirectory)
+if ($resolvedBundleDirectory.StartsWith($resolvedBuild, $pathComparison)) {
     if (Test-Path -LiteralPath $bundleDirectory) {
         Remove-Item -LiteralPath $bundleDirectory -Recurse -Force
     }
@@ -122,7 +130,7 @@ Copy-Item -LiteralPath $applicationJar.FullName -Destination (Join-Path $bundleD
 
 $expectedFiles = @('Dockerfile', 'application.jar')
 $actualFiles = @(Get-ChildItem -LiteralPath $bundleDirectory -File -Recurse |
-    ForEach-Object { $_.FullName.Substring($bundleDirectory.TrimEnd('\').Length + 1).Replace('\', '/') } |
+    ForEach-Object { $_.FullName.Substring($bundleDirectory.TrimEnd([char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)).Length + 1).Replace([System.IO.Path]::DirectorySeparatorChar, '/') } |
     Sort-Object)
 if (Compare-Object ($expectedFiles | Sort-Object) $actualFiles) {
     throw "AWS bundle contains unexpected or missing files: $($actualFiles -join ', ')"

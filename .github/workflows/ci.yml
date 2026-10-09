@@ -13,6 +13,8 @@ permissions:
 
 jobs:
   verify:
+    outputs:
+      bundle-sha256: ${{ steps.bundle-hash.outputs.sha256 }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,8 +48,31 @@ jobs:
       - name: Build and test backend
         run: ./gradlew --no-daemon clean build -PfrontendDistDir=frontend/dist
 
-      - name: Build Docker image
-        run: docker build --tag employee-lifecycle-sync:ci .
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit
+
+      - name: Create AWS deployment bundle from verified bootJar
+        shell: pwsh
+        run: ./scripts/New-AwsBundle.ps1 -SkipBuild
+
+      - name: Verify AWS bundle root entries
+        shell: pwsh
+        run: ./scripts/Test-AwsBundle.ps1 -ArchivePath build/aws-bundle.zip
+
+      - name: Build AWS runtime image from deployment bundle
+        run: docker build --file build/aws-bundle/Dockerfile --tag employee-lifecycle-sync:aws-ci build/aws-bundle
+
+      - name: Verify AWS runtime image uses a non-root user
+        run: docker run --rm --entrypoint sh employee-lifecycle-sync:aws-ci -c 'test "$(id -u)" -ne 0'
+
+      - name: Report deployment bundle SHA-256
+        id: bundle-hash
+        shell: bash
+        run: |
+          hash="$(sha256sum build/aws-bundle.zip | cut -d ' ' -f 1)"
+          echo "sha256=${hash}" >> "$GITHUB_OUTPUT"
+          echo "AWS bundle SHA-256: ${hash}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload backend test reports
         if: always()
@@ -56,3 +81,143 @@ jobs:
           name: backend-test-reports
           path: build/test-results/test
           if-no-files-found: ignore
+
+      - name: Upload AWS production bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: aws-production-bundle
+          path: build/aws-bundle.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 35
+    steps:
+      - name: Checkout deployment validator
+        uses: actions/checkout@v4
+
+      - name: Validate AWS deployment variables
+        shell: bash
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_EB_APPLICATION_NAME: ${{ vars.AWS_EB_APPLICATION_NAME }}
+          AWS_EB_ENVIRONMENT_NAME: ${{ vars.AWS_EB_ENVIRONMENT_NAME }}
+          AWS_EB_S3_BUCKET: ${{ vars.AWS_EB_S3_BUCKET }}
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          for name in AWS_REGION AWS_EB_APPLICATION_NAME AWS_EB_ENVIRONMENT_NAME AWS_EB_S3_BUCKET AWS_DEPLOY_ROLE_ARN; do
+            if [[ -z "${!name}" ]]; then
+              echo "Required repository variable is missing: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Download verified AWS production bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: aws-production-bundle
+          path: build/aws-production-bundle
+
+      - name: Validate downloaded deployment bundle
+        shell: pwsh
+        run: ./scripts/Test-AwsBundle.ps1 -ArchivePath build/aws-production-bundle/aws-bundle.zip
+
+      - name: Verify downloaded artifact matches the verified bundle
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.verify.outputs.bundle-sha256 }}
+        run: |
+          actual_sha256="$(sha256sum build/aws-production-bundle/aws-bundle.zip | cut -d ' ' -f 1)"
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "Downloaded bundle hash differs from the verify job artifact." >&2
+            exit 1
+          fi
+          echo "Verified the downloaded deployment artifact SHA-256."
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-main-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload bundle and create Elastic Beanstalk application version
+        id: release
+        shell: bash
+        env:
+          AWS_EB_APPLICATION_NAME: ${{ vars.AWS_EB_APPLICATION_NAME }}
+          AWS_EB_S3_BUCKET: ${{ vars.AWS_EB_S3_BUCKET }}
+        run: |
+          version_label="main-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if (( ${#version_label} > 100 )); then
+            echo "Elastic Beanstalk version label exceeds 100 characters." >&2
+            exit 1
+          fi
+          s3_key="deployments/${GITHUB_SHA}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/aws-bundle.zip"
+          aws s3api put-object \
+            --bucket "$AWS_EB_S3_BUCKET" \
+            --key "$s3_key" \
+            --body build/aws-production-bundle/aws-bundle.zip
+          aws elasticbeanstalk create-application-version \
+            --application-name "$AWS_EB_APPLICATION_NAME" \
+            --version-label "$version_label" \
+            --source-bundle "S3Bucket=${AWS_EB_S3_BUCKET},S3Key=${s3_key}" \
+            --process
+          echo "version-label=${version_label}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Elastic Beanstalk environment
+        env:
+          AWS_EB_APPLICATION_NAME: ${{ vars.AWS_EB_APPLICATION_NAME }}
+          AWS_EB_ENVIRONMENT_NAME: ${{ vars.AWS_EB_ENVIRONMENT_NAME }}
+          VERSION_LABEL: ${{ steps.release.outputs.version-label }}
+        run: |
+          aws elasticbeanstalk update-environment \
+            --application-name "$AWS_EB_APPLICATION_NAME" \
+            --environment-name "$AWS_EB_ENVIRONMENT_NAME" \
+            --version-label "$VERSION_LABEL"
+
+      - name: Wait for the exact Elastic Beanstalk version to be Ready
+        shell: bash
+        env:
+          AWS_EB_ENVIRONMENT_NAME: ${{ vars.AWS_EB_ENVIRONMENT_NAME }}
+          VERSION_LABEL: ${{ steps.release.outputs.version-label }}
+        run: |
+          for attempt in $(seq 1 60); do
+            details="$(aws elasticbeanstalk describe-environments \
+              --environment-names "$AWS_EB_ENVIRONMENT_NAME" \
+              --query 'Environments[0].[Status,VersionLabel]' --output text)"
+            status="$(printf '%s' "$details" | awk '{print $1}')"
+            label="$(printf '%s' "$details" | awk '{print $2}')"
+            echo "Elastic Beanstalk status=${status}, version=${label} (check ${attempt}/60)"
+            if [[ "$status" == "Ready" && "$label" == "$VERSION_LABEL" ]]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for Elastic Beanstalk to report Ready with the requested version label." >&2
+          exit 1
+
+      - name: Verify deployed CloudFront health endpoint
+        shell: bash
+        run: |
+          health_url='https://d2cpqpf162fsls.cloudfront.net/actuator/health'
+          for attempt in $(seq 1 30); do
+            response_file="$(mktemp)"
+            http_status="$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output "$response_file" --write-out '%{http_code}' "$health_url" || true)"
+            if [[ "$http_status" == "200" ]] && jq --exit-status '.status == "UP"' "$response_file" >/dev/null; then
+              echo "CloudFront health check succeeded with HTTP 200 and status UP."
+              rm -f "$response_file"
+              exit 0
+            fi
+            echo "Health check ${attempt}/30 returned HTTP ${http_status}; retrying."
+            rm -f "$response_file"
+            sleep 10
+          done
+          echo "CloudFront health endpoint did not return HTTP 200 with status UP." >&2
+          exit 1

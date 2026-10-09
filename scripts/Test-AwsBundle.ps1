@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $ArchivePath = (Join-Path $PSScriptRoot '..\build\aws-bundle.zip')
+    [string] $ArchivePath = (Join-Path (Join-Path $PSScriptRoot '..') 'build/aws-bundle.zip')
 )
 
 $ErrorActionPreference = 'Stop'
