@@ -175,20 +175,21 @@ jobs:
               --version-labels "$version_label" \
               --query 'ApplicationVersions[0].Status' \
               --output text)"
+            status="${status^^}"
             echo "Application version ${version_label} processing status=${status} (check ${attempt}/60)"
             case "$status" in
-              Processed)
+              PROCESSED)
                 break
                 ;;
-              Failed)
+              FAILED)
                 echo "Elastic Beanstalk failed to process application version ${version_label}." >&2
                 exit 1
                 ;;
-              Unprocessed)
+              UNPROCESSED)
                 echo "Elastic Beanstalk left application version ${version_label} unprocessed; refusing to deploy it." >&2
                 exit 1
                 ;;
-              Processing|Building|None|"")
+              PROCESSING|BUILDING|NONE|"")
                 if (( attempt == 60 )); then
                   echo "Timed out waiting for application version ${version_label} to become Processed; last status=${status}." >&2
                   exit 1
