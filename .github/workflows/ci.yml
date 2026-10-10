@@ -167,41 +167,7 @@ jobs:
           aws elasticbeanstalk create-application-version \
             --application-name "$AWS_EB_APPLICATION_NAME" \
             --version-label "$version_label" \
-            --source-bundle "S3Bucket=${AWS_EB_S3_BUCKET},S3Key=${s3_key}" \
-            --process
-          for attempt in $(seq 1 60); do
-            status="$(aws elasticbeanstalk describe-application-versions \
-              --application-name "$AWS_EB_APPLICATION_NAME" \
-              --version-labels "$version_label" \
-              --query 'ApplicationVersions[0].Status' \
-              --output text)"
-            status="${status^^}"
-            echo "Application version ${version_label} processing status=${status} (check ${attempt}/60)"
-            case "$status" in
-              PROCESSED)
-                break
-                ;;
-              FAILED)
-                echo "Elastic Beanstalk failed to process application version ${version_label}." >&2
-                exit 1
-                ;;
-              UNPROCESSED)
-                echo "Elastic Beanstalk left application version ${version_label} unprocessed; refusing to deploy it." >&2
-                exit 1
-                ;;
-              PROCESSING|BUILDING|NONE|"")
-                if (( attempt == 60 )); then
-                  echo "Timed out waiting for application version ${version_label} to become Processed; last status=${status}." >&2
-                  exit 1
-                fi
-                sleep 10
-                ;;
-              *)
-                echo "Unexpected processing status for application version ${version_label}: ${status}." >&2
-                exit 1
-                ;;
-            esac
-          done
+            --source-bundle "S3Bucket=${AWS_EB_S3_BUCKET},S3Key=${s3_key}"
           echo "version-label=${version_label}" >> "$GITHUB_OUTPUT"
 
       - name: Update Elastic Beanstalk environment
