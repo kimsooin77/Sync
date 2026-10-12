@@ -1,4 +1,4 @@
-# Day 12 Bulk lookup measurements
+# 직원 일괄 조회 측정
 
 - Baseline/source commit: `3d3691af8c2fa8aa640ef35e3a495ac6a43e6507 (working tree modified)`
 - Java: `21.0.6+7-LTS`
@@ -7,7 +7,7 @@
 - Timed interval: service invocation through SyncJob completion transaction; fixture setup, truncation, and verification queries are excluded.
 - SQL: Hibernate prepared-statement statistics; StatementInspector counts Employee lookups by `employee_no = ?` and `employee_no IN (...)`.
 
-| Scenario | Samples (ms) | Median (ms) | Prepared statements | Employee individual SELECT | Employee bulk SELECT | INSERT | UPDATE | SKIP | FAILED | SyncItem | AuditLog | IntegrationTask |
+| 처리 데이터 | Samples (ms) | Median (ms) | PreparedStatement 수 | Employee 개별 SELECT | Employee 일괄 SELECT | INSERT | UPDATE | SKIP | FAILED | SyncItem | AuditLog | IntegrationTask |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-|A|[19665.616, 17414.587, 18332.157]|18332.157|10018|0|10|0|0|10000|0|10000|0|0|
-|B|[22522.670, 21988.009, 20734.657]|21988.009|14018|1000|10|0|1000|9000|0|10000|1000|1000|
+|10,000건 전체 SKIP|[19665.616, 17414.587, 18332.157]|18332.157|10018|0|10|0|0|10000|0|10000|0|0|
+|1,000 UPDATE + 9,000 SKIP|[22522.670, 21988.009, 20734.657]|21988.009|14018|1000|10|0|1000|9000|0|10000|1000|1000|
