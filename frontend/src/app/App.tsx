@@ -31,7 +31,6 @@ function LoginPage() {
     <label>비밀번호<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
     {error && <div className="alert error" role="alert">{error}</div>}
     <button className="primary full" disabled={busy}>{busy ? '확인 중…' : '로그인'}</button>
-    <p className="small muted">로그인과 관리자 요청은 세션 및 CSRF 보호를 사용합니다.</p>
   </form></main>;
 }
 

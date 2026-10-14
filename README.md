@@ -2,95 +2,79 @@
 
 HR 직원 스냅샷을 내부 직원 데이터와 동기화하고, 입사·정보 변경·퇴사에 따른 그룹웨어 계정 작업과 외부 연계 실패 이력을 관리합니다.
 
-[![CI](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml?query=branch%3Amain) · [배포 데모](https://d2cpqpf162fsls.cloudfront.net) · [Health](https://d2cpqpf162fsls.cloudfront.net/actuator/health)
+[![CI](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml?query=branch%3Amain) · [운영 데모](https://d2cpqpf162fsls.cloudfront.net)
 
 ## 프로젝트 개요
 
-직원 정보를 여러 시스템에 반영할 때 외부 연계 장애가 내부 직원 처리까지 되돌리거나 다른 직원의 처리를 막으면 업무 복구가 어려워집니다. 이 시스템은 직원 변경을 먼저 내부 DB에 기록하고 외부 계정 반영을 별도 작업으로 처리해, 실패한 연계를 추적하고 다시 실행할 수 있도록 구성했습니다.
+직원 정보 변경을 먼저 내부 데이터베이스에 저장하고, 그룹웨어 반영은 별도 작업으로 처리합니다. 한 직원의 외부 연계가 실패해도 다른 직원의 동기화는 계속되며, 실패 내역을 확인하고 다시 처리할 수 있습니다.
 
-## 주요 기능
+## 핵심 설계
 
-- HR 직원 스냅샷을 정규화하고 사번 기준으로 `INSERT`·`UPDATE`·`SKIP` 처리
-- 직원 변경, 감사 기록, 그룹웨어 연계 작업을 직원 단위로 원자적으로 저장
-- 그룹웨어 계정 생성·수정·비활성화와 실제 호출 결과 이력 관리
-- 자동 Retry, 허용된 작업의 수동 Retry, 처리 중단 작업 복구
-- UUID 멱등 키로 같은 연계 요청의 중복 적용 방지
+- **외부 장애 격리**: 직원 정보, 변경 이력, 외부 연계 작업을 직원 단위 데이터베이스 트랜잭션으로 저장합니다. 그룹웨어 HTTP 요청은 커밋 후 별도 Worker가 보내므로 외부 응답 지연이 직원 동기화 트랜잭션을 붙잡지 않습니다.
+- **실패 작업 복구**: 일시적인 연결·응답 오류는 정해진 간격으로 자동 재처리하고, 최대 재처리 횟수에 도달한 작업은 실패 작업으로 남깁니다. 처리 중단 작업도 감지해 재처리하거나 관리자가 다시 요청할 수 있습니다.
+- **반복 동기화 조회 개선**: 사번을 묶음으로 조회해 메모리에서 비교하므로 변경이 없는 직원의 개별 조회를 줄입니다. 실제 처리 시간과 조회 횟수는 아래 성능 개선에 기록했습니다.
 
 ## 전체 처리 흐름
 
 ```mermaid
 flowchart LR
-    HR[HR 스냅샷 API] --> Normalize[정규화와 검증]
+    HR[HR 스냅샷 HTTP] --> Normalize[정규화와 검증]
     Normalize --> Sync[직원 동기화]
-    Sync --> Employee[(Employee)]
-    Sync --> Item[(SyncItem)]
-    Sync --> Audit[(AuditLog)]
-    Sync --> Task[(IntegrationTask)]
-    Task --> Worker[연계 Worker]
-    Worker --> Groupware[그룹웨어 HTTP API]
-    Groupware -- 응답 --> Worker
-    Worker --> Result[(IntegrationAttempt와 Task 결과 저장)]
-    Sync -. 실행 상태와 집계 관리 .-> Job[(SyncJob)]
+    Sync --> Tx[직원별 DB 트랜잭션]
+    Tx --> Store[직원 정보·변경 이력·외부 작업 저장]
+    Store --> Commit[커밋]
+    Commit --> Worker[외부 연계 Worker]
+    Worker --> Groupware[그룹웨어 HTTP]
+    Groupware --> Result[호출 결과 저장]
 ```
 
-SyncJob은 동기화 실행 상태와 처리 건수를 관리합니다. 현재 데모에서는 HR과 Groupware의 외부 API 계약과 장애 상황을 Mock HTTP API로 재현합니다.
+직원 정보와 변경 이력, 외부 연계 작업을 먼저 저장한 뒤 그룹웨어를 호출합니다. 외부 응답을 기다리는 동안 DB 트랜잭션을 유지하지 않습니다.
 
 ## 기술 스택
 
-| 구분 | 기술 |
-|---|---|
-| Backend | Java 21, Spring Boot 4.1.1, Spring Data JPA, Spring Security, Bean Validation, RestClient |
-| Frontend | React 19, TypeScript, Vite |
-| Database | PostgreSQL 17, Flyway |
-| Test | JUnit, Mockito, Testcontainers |
-| Infrastructure | Docker, AWS CloudFront, Elastic Beanstalk, RDS, GitHub Actions OIDC |
+- Java 21, Spring Boot 4.1.1, Spring Data JPA, Spring Security
+- PostgreSQL 17, Flyway
+- React 19, TypeScript
+- JUnit, Testcontainers, Docker
+- AWS CloudFront, Elastic Beanstalk, RDS, GitHub Actions OIDC
 
-## 동기화 처리
+## 직원 동기화 기준
 
-HR의 한 행은 직원의 현재 전체 상태를 나타내는 스냅샷입니다. 사번, 이름, 이메일, 부서 코드, 재직 상태를 비교합니다. 빈 이메일이나 부서 코드는 `null`로 정규화해 기존 값도 해제합니다.
+HR 데이터는 직원의 현재 전체 상태를 나타내는 스냅샷입니다. 사번, 이름, 회사 이메일, 부서 코드, 재직 상태를 비교하며, 이메일이나 부서가 비어 있으면 기존 값도 비워 미배정 상태로 반영합니다. 각 행은 독립적으로 처리합니다.
 
 | 결과 | 기준 | 저장 결과 |
 |---|---|---|
-| `INSERT` | 사번이 기존 Employee에 없음 | Employee, SyncItem, 생성 AuditLog, IntegrationTask |
-| `UPDATE` | 비교 필드 중 값이 달라짐 | Employee, SyncItem, 변경 AuditLog, IntegrationTask |
-| `SKIP` | 비교 필드가 모두 같음 | SyncItem |
-| `FAILED` | 정규화 검증 또는 직원별 저장 실패 | 실패 SyncItem; 다른 행은 계속 처리 |
+| 신규 (`INSERT`) | 기존 사번이 없음 | 직원 정보, 변경 이력, 외부 연계 작업 저장 |
+| 변경 (`UPDATE`) | 비교 항목의 값이 달라짐 | 직원 정보 갱신, 변경 이력, 외부 연계 작업 저장 |
+| 변경 없음 (`SKIP`) | 비교 항목이 모두 같음 | 처리 결과 저장 |
+| 실패 (`FAILED`) | 정규화·검증 또는 해당 직원 저장 실패 | 실패 결과 저장 후 다음 행 처리 |
 
-최종 재직 상태가 `TERMINATED`이면 신규·변경 여부와 관계없이 `DISABLE_ACCOUNT` 작업을 만듭니다. `ACTIVE` 또는 `ON_LEAVE`의 신규 직원은 `CREATE_ACCOUNT`, 기존 직원 변경은 `UPDATE_ACCOUNT`로 처리합니다. `SKIP`에는 외부 작업을 만들지 않습니다.
+직원 정보 변경, 변경 이력, 외부 연계 작업은 한 직원의 트랜잭션에 함께 저장합니다. 퇴사자는 그룹웨어 계정을 비활성화하고, 재직 또는 휴직 상태의 신규 직원은 계정을 만듭니다. 기존 직원 정보가 바뀌면 계정을 갱신하며, 변경이 없으면 외부 작업을 만들지 않습니다.
 
-## 트랜잭션 설계
+## 외부 연계 실패 대응
 
-```text
-SyncJob RUNNING 저장       REQUIRES_NEW → COMMIT
-HR HTTP 호출               트랜잭션 없음
-전체 건수 반영             REQUIRES_NEW → COMMIT
-직원별 Employee 처리       각각 REQUIRES_NEW
-  Employee + SyncItem + AuditLog + IntegrationTask
-Worker PROCESSING 반영     REQUIRES_NEW → COMMIT
-Groupware HTTP 호출        트랜잭션 없음
-Attempt + Task 결과 반영   REQUIRES_NEW → COMMIT
-```
+- **자동 재처리**: 연결 오류, 시간 초과, HTTP `429`, `500`, `502`, `503`, `504`는 5초, 15초, 30초 간격으로 재처리합니다. 재처리 횟수를 모두 사용하면 실패 작업으로 남습니다.
+- **중단 작업 복구**: 처리 중인 작업이 60초 이상 남으면 중단 여부를 확인하고, 재처리 횟수에 따라 다시 대기시키거나 실패 작업으로 전환합니다.
+- **수동 재처리**: 관리자는 재처리가 허용된 실패 작업만 다시 요청할 수 있습니다.
+- **중복 처리 방지**: 같은 외부 요청이 다시 전달돼도 계정 작업이 중복 적용되지 않도록 요청 식별 키를 유지합니다.
 
-외부 응답을 기다리는 동안 DB 트랜잭션을 열어 두지 않습니다. INSERT/UPDATE 처리에서 Employee, SyncItem, AuditLog, IntegrationTask 중 하나라도 저장에 실패하면 해당 직원 변경 전체를 롤백합니다. 직원 한 행의 검증·저장 오류는 그 행에 격리합니다.
+## 연계 시나리오
 
-## 외부 연계 실패 복구
-
-HTTP `429`, `500`, `502`, `503`, `504`, 연결 실패와 timeout은 자동 Retry 대상입니다. 재시도 간격은 5초, 15초, 30초이며 자동 재실행 예산을 소진하면 작업은 `FAILED`로 남습니다. 관리자는 허용된 실패 작업을 수동으로 다시 대기 상태로 전환할 수 있습니다.
-
-`PROCESSING` 상태로 60초 이상 남은 작업은 자동 복구 대상입니다. 재실행 예산이 남으면 다시 처리하고, 소진하면 외부 결과를 확인할 수 없는 상태로 종료합니다. HTTP 호출 결과와 Task 상태는 함께 저장하며, IntegrationAttempt는 결과까지 확인해 영속화한 호출 이력을 나타냅니다.
-
-작업별 UUID 멱등 키는 자동·수동 Retry에서도 유지됩니다. Mock Groupware가 성공 처리했지만 응답이 유실된 경우 같은 키로 다시 요청해 중복 적용을 막고, 같은 키에 다른 요청이 오면 충돌로 처리합니다. 이 멱등 보장은 현재 Mock 구현 범위입니다.
+- HR 스냅샷: 최초 직원 등록, 직원 정보 변경·퇴사, 일부 직원 정보 오류
+- 그룹웨어 응답: 정상, 지연, 시간 초과, 서버 오류, 첫 요청 실패 후 성공
+- 직원별 그룹웨어 응답 예외를 설정해 한 직원의 실패와 재처리 흐름을 확인할 수 있습니다.
+- 실제 외부 시스템 대신 Mock HTTP API로 동일한 연계 흐름과 실패 상황을 재현합니다.
 
 ## 성능 개선
 
-직원별 `findByEmployeeNo()` 조회를 employeeNo 최대 1,000개 단위 일괄 조회로 바꾸고, 결과를 Map으로 구성해 비교합니다. INSERT/UPDATE 후보는 직원 단위 트랜잭션에서 최신 Employee를 다시 조회합니다.
+직원 10,000건을 처리할 때 발생하던 반복 조회를 사번 일괄 조회 방식으로 변경했습니다.
 
-| 처리 데이터 | 직원 조회 횟수 (개별 / 일괄) | 처리 시간 |
+| 처리 데이터 | 직원 조회 횟수 (개별 / 묶음) | 처리 시간 |
 |---|---:|---:|
-| 10,000건 전체 SKIP | 개별 10,000회 → 일괄 10회 | 27.17초 → 18.33초 (32.53% 단축) |
-| 1,000 UPDATE + 9,000 SKIP | 개별 10,000회 → 일괄 10회 + 개별 1,000회 | 29.77초 → 21.99초 (26.14% 단축) |
+| 10,000건 전체 변경 없음 | 10,000회 → 10회 | 27.17초 → 18.33초 (32.53% 단축) |
+| 1,000건 변경 + 9,000건 변경 없음 | 10,000회 → 묶음 10회 + 개별 1,000회 | 29.77초 → 21.99초 (26.14% 단축) |
 
-측정 환경은 Java 21.0.6, PostgreSQL 17.11 Testcontainers이며 시간은 각 처리 데이터별 3회 측정의 중앙값입니다. 측정 조건과 전체 PreparedStatement 수는 [직원 일괄 조회 성능 비교](docs/performance/employee-bulk-lookup-performance.md)를 참고하세요.
+[성능 개선 보고서](docs/performance/employee-bulk-lookup-performance.md)에서 측정 기준을 확인할 수 있습니다.
 
 ## 데이터 모델
 
@@ -105,42 +89,29 @@ erDiagram
     INTEGRATION_TASK ||--o{ INTEGRATION_ATTEMPT : records
 ```
 
-실패한 SyncItem은 Employee와 연결되지 않을 수 있습니다. AuditLog와 IntegrationTask는 SyncItem을 통해 SyncJob 처리 결과와 연결됩니다.
+이 관계도는 직원 동기화 결과와 직원별 변경 이력, 외부 연계 호출 기록의 연결을 보여줍니다.
 
-## 관리자 기능
+## 관리 화면
 
-- HR 동기화 실행 및 SyncJob 결과 확인
-- 직원 상세와 변경 감사 이력 조회
-- IntegrationTask, payload, Attempt 이력 조회
-- 허용된 실패 작업 수동 Retry
-- 데모 HR 시나리오와 Groupware 장애 모드 설정
+- HR 동기화를 실행하고 실행 결과와 직원별 처리 건수를 확인합니다.
+- 직원 상세 정보와 필드별 변경 이력을 조회합니다.
+- 외부 연계 작업의 상태와 실제 호출 결과 이력을 확인합니다.
+- 재처리할 수 있는 실패 작업을 다시 요청합니다.
+- 연계 시나리오에서 HR 데이터와 직원별 그룹웨어 응답 예외를 설정합니다.
 
-## 배포 구조
+## 배포 및 자동화
 
 ```mermaid
 flowchart LR
-    Browser[관리자 브라우저] --> CF[CloudFront HTTPS]
+    Browser[브라우저] --> CF[CloudFront HTTPS]
     CF --> EB[Elastic Beanstalk]
-    EB --> EC2[단일 EC2 Docker 인스턴스]
-    EC2 --> App[Spring Boot 애플리케이션]
+    EB --> App[Spring Boot Docker 앱]
     App --> RDS[(RDS PostgreSQL 17)]
 ```
 
-React 정적 파일은 Spring Boot JAR에 포함되며, 단일 Elastic Beanstalk Docker 인스턴스에서 애플리케이션과 연계 Worker가 함께 실행됩니다. 애플리케이션과 RDS는 별도 리소스로 구성해 애플리케이션 배포와 DB 생명주기를 분리했습니다. 스키마 변경은 Flyway가 관리합니다.
+React 빌드 파일은 Spring Boot JAR에 포함되며 API와 외부 연계 Worker는 같은 애플리케이션 인스턴스에서 실행됩니다. 애플리케이션과 RDS는 별도 리소스로 운영합니다. `main` 브랜치의 GitHub Actions는 OIDC로 AWS에 인증해 기존 Elastic Beanstalk 환경에 배포합니다.
 
-## CI/CD
-
-`local`과 `develop`에서는 GitHub Actions가 테스트와 build를 검증합니다. `main`은 같은 검증을 통과한 뒤 GitHub Actions OIDC로 AWS에 인증하고 기존 Elastic Beanstalk 환경에 배포합니다. 검증 job이 만든 bundle을 artifact로 전달하고 SHA-256을 확인해 검증한 파일과 배포 파일을 일치시킵니다.
-
-## 로컬 실행
-
-Docker와 `.env.example`에 맞는 로컬 설정이 필요합니다. 저장소 루트에서 실행합니다.
-
-```shell
-docker compose up --build
-```
-
-## 문서
+## 참고 문서
 
 - [직원 일괄 조회 성능 비교](docs/performance/employee-bulk-lookup-performance.md)
 - [AWS 배포 구성](docs/deployment.md)
