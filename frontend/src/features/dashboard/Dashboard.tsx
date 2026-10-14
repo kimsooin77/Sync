@@ -83,13 +83,12 @@ export function Dashboard() {
       : <span className="muted">아직 실행한 동기화가 없습니다.</span>}
     </div>
     <section className="dashboard-demo-section" aria-labelledby="dashboard-demo-heading">
-      <div className="dashboard-demo-heading"><div><h2 id="dashboard-demo-heading">현재 연계 시나리오</h2></div><Link className="demo-context-button" to="/scenarios">시나리오 변경</Link></div>
+      <div className="dashboard-demo-heading"><div className="dashboard-demo-title-group"><h2 id="dashboard-demo-heading">현재 연계 시나리오</h2><p className="dashboard-workflow-hint">특정 직원에 예외 응답을 설정하면 외부 연계 실패와 자동 재시도 흐름을 확인할 수 있습니다.</p></div><Link className="demo-context-button" to="/scenarios">시나리오 변경</Link></div>
       <div className="dashboard-demo-context" aria-label="현재 연계 시나리오 요약">
         <span><small>HR 데이터</small><b>{scenarioUnavailable ? '확인할 수 없음' : scenario ? scenarioLabel(scenario) : '불러오는 중'}</b></span>
         <span><small>그룹웨어 기본 응답</small><b>{simulationUnavailable ? '확인할 수 없음' : simulation ? modeLabel(simulation.defaultRule.mode) : '불러오는 중'}</b></span>
         <span><small>직원별 예외</small><b>{simulationUnavailable ? '확인할 수 없음' : simulation ? `${Object.keys(simulation.overrides).length}건` : '불러오는 중'}</b></span>
       </div>
-      <p className="dashboard-workflow-hint">특정 직원에 예외 응답을 설정하면 외부 연계 실패와 자동 재시도 흐름을 확인할 수 있습니다.</p>
     </section>
     {notice && <div className="alert success" role="status">{notice}</div>}
     {error && <div className="alert error" role="alert">{error}</div>}
@@ -129,7 +128,7 @@ export function Dashboard() {
       </section>
 
       <section className="dashboard-section attention-section" aria-labelledby="attention-heading">
-        <div className="section-title"><div><p className="eyebrow">그룹웨어 처리</p><h2 id="attention-heading">확인이 필요한 외부 연계 <span className="attention-count">{failedTasks?.totalElements ?? 0}건</span></h2></div>
+        <div className="section-title"><div><p className="eyebrow">그룹웨어 처리</p><h2 id="attention-heading">확인이 필요한 외부 연계 <span className={`attention-count${(failedTasks?.totalElements ?? 0) > 0 ? ' has-failures' : ''}`}>{failedTasks?.totalElements ?? 0}건</span></h2></div>
           <Link className="text-link" to="/integrations">전체 보기</Link>
         </div>
         {failedTasks?.content.length ? <ul className="attention-list">{failedTasks.content.map((task) => (

@@ -744,6 +744,36 @@ tbody tr{transition:background-color .12s}
 .integration-route-detail .attempt-technical>summary:focus-visible{outline:2px solid #8979d8;outline-offset:2px}
 .integration-route-detail .attempt-technical p{margin:4px 0;overflow-wrap:anywhere;white-space:pre-wrap}
 
+/* Dashboard working surfaces stay distinct from the neutral page background. */
+.dashboard-page .dashboard-workflow,
+.dashboard-page .summary-section,
+.dashboard-page .dashboard-section.jobs-section,
+.dashboard-page .dashboard-section.attention-section{padding:16px;border:1px solid var(--line);border-radius:7px;background:#fff;box-shadow:none}
+.dashboard-page .dashboard-demo-section{padding:15px 16px 16px;border:1px solid #e9e6f4;border-radius:7px;background:#f9f8fe;box-shadow:none}
+.dashboard-page .dashboard-demo-context>span:first-child{padding-left:0}
+.dashboard-page .dashboard-workflow{border-block:1px solid var(--line)}
+.dashboard-page .summary-section{margin-bottom:18px}
+.dashboard-page .summary-heading{margin-bottom:7px}
+.dashboard-page .summary-strip{border:0}
+.dashboard-page .summary-item{padding-inline:14px;border-right:1px solid var(--line)}
+.dashboard-page .summary-item:first-child{padding-left:14px}
+.dashboard-page .summary-item:last-child{border-right:0}
+.dashboard-page .dashboard-operations{gap:16px}
+.dashboard-page .dashboard-section{border:1px solid var(--line)}
+.dashboard-page .dashboard-section>.section-title{padding:0 0 10px}
+.dashboard-page .dashboard-section .table-frame{border:0;border-radius:0;background:transparent}
+.dashboard-page .attention-section.has-failures{padding:16px;border:1px solid var(--line);border-radius:7px;background:#fff}
+.dashboard-page .attention-item:first-child{border-top:1px solid #e8ebef}
+@media(max-width:760px){
+  .dashboard-page .summary-item{padding:10px 10px}
+  .dashboard-page .summary-item:first-child{padding-left:10px}
+  .dashboard-page .summary-item:nth-child(2n){border-right:0}
+  .dashboard-page .summary-item:nth-child(-n+2){border-bottom:1px solid var(--line)}
+}
+@media(max-width:560px){
+  .dashboard-page .dashboard-workflow ol{grid-template-columns:1fr}
+}
+
 /* Sidebar entries use one 24px icon box and a consistent 20px label gap. */
 .sidebar{background:#202735;color:#e2e6ed}
 .sidebar nav{display:grid;gap:5px}
@@ -764,9 +794,12 @@ tbody tr{transition:background-color .12s}
 .demo-context-button:focus-visible{outline:2px solid #7259de;outline-offset:2px}
 @media(max-width:560px){.dashboard-demo-context{flex-wrap:wrap;row-gap:10px}.dashboard-demo-context>span{padding-inline:9px}.dashboard-demo-context>span:first-child{padding-left:0}}
 .dashboard-demo-section{margin:0 0 18px;padding:12px 0 13px;border-top:1px solid #e5e8ed;border-bottom:1px solid #e5e8ed}
-.dashboard-demo-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:9px}
+.dashboard-demo-heading{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin-bottom:9px}
+.dashboard-demo-title-group{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;min-width:0}
 .dashboard-demo-heading .eyebrow{margin-bottom:3px}
 .dashboard-demo-heading h2{font-size:13px;font-weight:600}
+.dashboard-demo-heading .dashboard-workflow-hint{width:auto;margin:0}
+.dashboard-demo-heading .demo-context-button{margin-left:auto;flex:0 0 auto}
 .dashboard-demo-context{min-height:0;margin:0;color:#566273}
 .dashboard-demo-context>span{padding-inline:12px}
 .dashboard-demo-context>span small{font-size:10px}
@@ -791,3 +824,31 @@ tbody tr{transition:background-color .12s}
 .employee-route-detail .employee-info-section dd{margin-top:4px;color:#354154;font-size:12px;overflow-wrap:anywhere}
 @media(max-width:760px){.dashboard-workflow ol{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:12px}.dashboard-workflow li:nth-child(3){border-left:0}.dashboard-workflow li:nth-child(3),.dashboard-workflow li:nth-child(4){padding-top:12px;border-top:1px solid #e5e8ed}}
 @media(max-width:560px){.dashboard-demo-context>span{padding-inline:8px}.dashboard-workflow ol{grid-template-columns:1fr;row-gap:0}.dashboard-workflow li,.dashboard-workflow li:first-child{padding:10px 0}.dashboard-workflow li+li,.dashboard-workflow li:nth-child(3){border-left:0;border-top:1px solid #e5e8ed}.scenario-page .demo-override-form{grid-template-columns:1fr}.scenario-page .demo-override-form .secondary{margin:0}}
+
+/* Dashboard visual polish. */
+.dashboard-page .dashboard-workflow h3{font-size:12px;font-weight:700}
+.dashboard-page .dashboard-workflow p{color:#8993a0}
+.dashboard-page .summary-item{min-height:62px;gap:2px;padding:8px 10px}
+.dashboard-page .summary-item:first-child{padding-left:10px}
+.dashboard-page .attention-count.has-failures{color:#b34049;font-weight:600}
+@media(max-width:760px){
+  .dashboard-page .summary-item{padding:8px 10px}
+}
+
+/* Current scenario details read as three aligned fields on the dashboard. */
+.dashboard-page .dashboard-demo-context{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;gap:0;width:100%}
+.dashboard-page .dashboard-demo-context>span{display:grid;grid-template-rows:auto 1fr;gap:4px;min-width:0;padding:0 14px;border-right:1px solid #e7e9ed;text-align:left}
+.dashboard-page .dashboard-demo-context>span:first-child{padding-left:0}
+.dashboard-page .dashboard-demo-context>span:last-child{border-right:0}
+.dashboard-page .dashboard-demo-context>span small{color:#8993a0;font-size:10px}
+.dashboard-page .dashboard-demo-context>span b{color:#354154;font-size:13px;font-weight:600;overflow-wrap:anywhere}
+@media(max-width:760px){
+  .dashboard-page .dashboard-demo-context{grid-template-columns:minmax(0,1fr);row-gap:0}
+  .dashboard-page .dashboard-demo-context>span,
+  .dashboard-page .dashboard-demo-context>span:first-child{padding:8px 0;border-right:0;border-bottom:1px solid #eceef1}
+  .dashboard-page .dashboard-demo-context>span:last-child{border-bottom:0}
+}
+
+/* Center the employee list search icon within its input. */
+.filter-section .employee-keyword .search-field{display:flex;align-items:center}
+.filter-section .employee-keyword .search-field>span{display:inline-flex;align-items:center;justify-content:center;line-height:1}

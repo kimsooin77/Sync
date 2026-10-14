@@ -129,6 +129,23 @@ describe('dashboard demo context and workflow', () => {
     expect(within(summary).getByLabelText('동기화 오류: 0')).toBeInTheDocument();
     expect(within(summary).queryByText(/외부 연계 실패/)).not.toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: /확인이 필요한 외부 연계 1건/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /확인이 필요한 외부 연계/ }).querySelector('.attention-count')).toHaveClass('has-failures');
     expect(screen.getByRole('link', { name: 'E1002' })).toHaveAttribute('href', '/integrations/21');
+  });
+
+  it('keeps the attention count neutral when there are no failed integrations', async () => {
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url.startsWith('/api/sync-jobs')) return jsonResponse(emptyPage);
+      if (url.startsWith('/api/integration-tasks')) return jsonResponse(emptyPage);
+      if (url === '/mock/hr/scenario') return jsonResponse({ scenario: 'initial' });
+      if (url === '/mock/groupware/failure-simulation') return jsonResponse({ defaultRule: { mode: 'NORMAL', delayMs: 0 }, overrides: {} });
+      throw new Error(`Unexpected ${url}`);
+    });
+    render(providers(<DemoProvider><Dashboard /></DemoProvider>));
+
+    const count = await screen.findByText('0건');
+    expect(count).not.toHaveClass('has-failures');
   });
 });
