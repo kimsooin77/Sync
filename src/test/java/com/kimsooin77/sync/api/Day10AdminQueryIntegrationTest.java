@@ -68,6 +68,14 @@ class Day10AdminQueryIntegrationTest {
                 });
         assertBadRequest(() -> client.get().uri("/api/employees?employmentStatus=UNKNOWN").retrieve().toBodilessEntity());
         assertBadRequest(() -> client.get().uri("/api/employees?size=101").retrieve().toBodilessEntity());
+        assertThat(client.get().uri("/api/employees?sortBy=name&sortDirection=ASC&page=0&size=1").retrieve().body(String.class))
+                .contains("E2001").doesNotContain("E2002");
+        assertThat(client.get().uri("/api/employees?sortBy=name&sortDirection=ASC&page=1&size=1").retrieve().body(String.class))
+                .contains("E2002").doesNotContain("E2001");
+        assertThat(client.get().uri("/api/employees?sortBy=name&sortDirection=desc&size=1").retrieve().body(String.class))
+                .contains("E2002").doesNotContain("E2001");
+        assertBadRequest(() -> client.get().uri("/api/employees?sortBy=companyEmail").retrieve().toBodilessEntity());
+        assertBadRequest(() -> client.get().uri("/api/employees?sortDirection=sideways").retrieve().toBodilessEntity());
         long employeeId = employees.findByEmployeeNo("E2001").orElseThrow().getId();
         assertThat(client.get().uri("/api/employees/{id}", employeeId).retrieve().body(String.class))
                 .contains("E2001", "Kim One");
@@ -88,6 +96,12 @@ class Day10AdminQueryIntegrationTest {
                 .retrieve().body(String.class)).contains("E2001", "CREATE_ACCOUNT", "\"totalElements\":1");
         assertThat(client.get().uri("/api/integration-tasks?employeeNo=NO-SUCH-EMPLOYEE")
                 .retrieve().body(String.class)).contains("\"content\":[]", "\"totalElements\":0");
+        assertThat(client.get().uri("/api/integration-tasks?sortBy=employeeNo&sortDirection=ASC&page=0&size=1")
+                .retrieve().body(String.class)).contains("E2001").doesNotContain("E2002");
+        assertThat(client.get().uri("/api/integration-tasks?sortBy=employeeNo&sortDirection=DESC&page=0&size=1")
+                .retrieve().body(String.class)).contains("E2002").doesNotContain("E2001");
+        assertBadRequest(() -> client.get().uri("/api/integration-tasks?sortBy=payload").retrieve().toBodilessEntity());
+        assertBadRequest(() -> client.get().uri("/api/integration-tasks?sortDirection=sideways").retrieve().toBodilessEntity());
         assertBadRequest(() -> client.get().uri("/api/integration-tasks?status=UNKNOWN").retrieve().toBodilessEntity());
         assertBadRequest(() -> client.get().uri("/api/integration-tasks?action=UNKNOWN").retrieve().toBodilessEntity());
         assertBadRequest(() -> client.get().uri("/api/integration-tasks?size=101").retrieve().toBodilessEntity());
@@ -149,6 +163,14 @@ class Day10AdminQueryIntegrationTest {
         assertThat(client.get().uri("/api/sync-jobs?status=FAILED").retrieve().body(String.class))
                 .contains("\"content\":[]", "\"totalElements\":0");
         assertBadRequest(() -> client.get().uri("/api/sync-jobs?status=UNKNOWN").retrieve().toBodilessEntity());
+        assertThat(client.get().uri("/api/sync-jobs?sortBy=id&sortDirection=ASC").retrieve().body(String.class))
+                .contains("\"syncJobId\":" + firstRunningId);
+        String descendingJobs = client.get().uri("/api/sync-jobs?sortBy=id&sortDirection=DESC&page=0&size=1")
+                .retrieve().body(String.class);
+        assertThat(descendingJobs).contains("\"syncJobId\":" + completedId)
+                .doesNotContain("\"syncJobId\":" + newestRunningId);
+        assertBadRequest(() -> client.get().uri("/api/sync-jobs?sortBy=failureMessage").retrieve().toBodilessEntity());
+        assertBadRequest(() -> client.get().uri("/api/sync-jobs?sortDirection=sideways").retrieve().toBodilessEntity());
     }
 
     private static void assertBadRequest(org.assertj.core.api.ThrowableAssert.ThrowingCallable request) {

@@ -17,10 +17,16 @@ import com.kimsooin77.sync.api.common.PageResponse;
 import com.kimsooin77.sync.sync.SyncJobStatus;
 import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.RequestParam;
+import java.util.Map;
+import com.kimsooin77.sync.api.common.PublicSortFactory;
 
 @RestController
 @RequestMapping("/api/sync-jobs")
 public class SyncJobController {
+    private static final Map<String, String> SORT_FIELDS = Map.of(
+            "id", "id", "status", "status", "totalCount", "totalCount", "insertedCount", "insertedCount",
+            "updatedCount", "updatedCount", "skippedCount", "skippedCount", "failedCount", "failedCount",
+            "startedAt", "startedAt");
 
     private final EmployeeSyncJobService employeeSyncJobService;
     private final SyncJobQueryService syncJobQueryService;
@@ -51,9 +57,10 @@ public class SyncJobController {
 
     @GetMapping
     public PageResponse<SyncJobListResponse> list(@RequestParam(required = false) SyncJobStatus status,
-            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
-        var pageable = PageRequestFactory.create(page, size, "startedAt", "id")
-                .withSort(Sort.by(Sort.Order.desc("startedAt"), Sort.Order.desc("id")));
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sortBy, @RequestParam(required = false) String sortDirection) {
+        var pageable = PageRequestFactory.create(page, size,
+                PublicSortFactory.create(sortBy, sortDirection, "startedAt", Sort.Direction.DESC, SORT_FIELDS));
         return PageResponse.from(syncJobQueryService.search(status, pageable).map(SyncJobListResponse::from));
     }
 }

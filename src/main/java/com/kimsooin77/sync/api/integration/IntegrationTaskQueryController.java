@@ -1,6 +1,7 @@
 package com.kimsooin77.sync.api.integration;
 import com.kimsooin77.sync.api.common.PageRequestFactory;
 import com.kimsooin77.sync.api.common.PageResponse;
+import com.kimsooin77.sync.api.common.PublicSortFactory;
 import com.kimsooin77.sync.integration.IntegrationAction;
 import com.kimsooin77.sync.integration.IntegrationTaskDetailRow;
 import com.kimsooin77.sync.integration.IntegrationTaskNotFoundException;
@@ -15,18 +16,24 @@ import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import java.util.Map;
 @RestController
 @RequestMapping("/api/integration-tasks")
 public class IntegrationTaskQueryController {
+    private static final Map<String, String> SORT_FIELDS = Map.of(
+            "id", "id", "taskId", "id", "employeeNo", "employee.employeeNo",
+            "action", "action", "status", "status", "retryCount", "retryCount",
+            "createdAt", "createdAt", "updatedAt", "updatedAt");
     private final IntegrationTaskQueryService service;
     private final ObjectMapper mapper;
     public IntegrationTaskQueryController(IntegrationTaskQueryService service, ObjectMapper mapper) { this.service = service; this.mapper = mapper; }
     @GetMapping
     public PageResponse<IntegrationTaskListResponse> list(@RequestParam(required = false) IntegrationTaskStatus status,
             @RequestParam(required = false) IntegrationAction action, @RequestParam(required = false) String employeeNo,
-            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
-        var pageable = PageRequestFactory.create(page, size, "createdAt", "id")
-                .withSort(Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id")));
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sortBy, @RequestParam(required = false) String sortDirection) {
+        var pageable = PageRequestFactory.create(page, size,
+                PublicSortFactory.create(sortBy, sortDirection, "createdAt", Sort.Direction.DESC, SORT_FIELDS));
         return PageResponse.from(service.search(status, action, employeeNo, pageable).map(IntegrationTaskListResponse::from));
     }
     @GetMapping("/{id}")
