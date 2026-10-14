@@ -28,7 +28,8 @@ describe('administrator shell and work dashboard', () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/', '/scenarios']}><AuthProvider><App /></AuthProvider><BackButton /></MemoryRouter>);
 
-    expect(await screen.findByRole('heading', { name: '연계 시나리오' })).toHaveFocus();
+    const scenarioHeading = await screen.findByRole('heading', { name: '연계 시나리오' });
+    await waitFor(() => expect(scenarioHeading).toHaveFocus());
     expect(screen.getByRole('link', { name: '연계 시나리오' })).toHaveAttribute('aria-current', 'page');
     await user.click(screen.getByRole('button', { name: '뒤로 이동' }));
     expect(await screen.findByRole('heading', { name: '직원 동기화' })).toBeInTheDocument();
