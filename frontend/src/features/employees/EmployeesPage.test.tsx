@@ -1,150 +1,145 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { describe, expect, it } from 'vitest';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { EmployeesPage } from './EmployeesPage';
+import { EmployeeDetailPage } from './EmployeeDetailPage';
 import { AuthProvider } from '../../auth/AuthContext';
-import { providers, emptyPage, jsonResponse, stubFetch } from '../../test/helpers';
+import { emptyPage, jsonResponse, stubFetch } from '../../test/helpers';
 
-const employee = { id: 7, employeeNo: 'E1001', name: '김수인', email: null, departmentCode: 'DEV01',
-  employmentStatus: 'ACTIVE', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z' };
-
-describe('employees and audit history', () => {
-  it('filters employees and shows detail with readable before/after values', async () => {
-    const calls: string[] = [];
-    stubFetch((url) => {
-      calls.push(url);
-      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
-      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
-      if (url.startsWith('/api/employees/7/audit-logs')) return url.includes('page=1')
-        ? jsonResponse({ ...emptyPage, content: [{ id: 10, action: 'UPDATED', source: 'HR_SYNC', changes: null, changesParseError: true, createdAt: '2026-10-03T00:00:00Z' }], totalElements: 9, totalPages: 2 })
-        : jsonResponse({ ...emptyPage, content: [{ id: 9, action: 'UPDATED', source: 'HR_SYNC', changes: { departmentCode: { before: 'DEV00', after: 'DEV01' }, email: { before: 'old@company.com', after: null } }, changesParseError: false, createdAt: '2026-10-02T00:00:00Z' }], totalElements: 9, totalPages: 2 });
-      if (url === '/api/employees/7') return jsonResponse(employee);
-      if (url.startsWith('/api/employees')) return jsonResponse({ ...emptyPage, content: [employee], totalElements: 1, totalPages: 1 });
-      throw new Error(`Unexpected ${url}`);
-    });
-    const user = userEvent.setup();
-    render(providers(<EmployeesPage />, '/employees?variant=drawer'));
-    expect(await screen.findByText('김수인')).toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: '재직 상태 필터' }));
-    await user.click(screen.getByRole('option', { name: '휴직 중' }));
-    await user.click(screen.getByRole('button', { name: /검색/ }));
-    await waitFor(() => expect(calls.some((url) => url.includes('employmentStatus=ON_LEAVE'))).toBe(true));
-    await user.click(screen.getByRole('button', { name: '김수인 E1001 상세 보기' }));
-    expect(await screen.findByRole('dialog', { name: '김수인 직원 상세' })).toBeInTheDocument();
-    expect(await screen.findByText('직원 정보 수정')).toBeInTheDocument();
-    await user.click(screen.getByText('직원 정보 수정'));
-    expect(screen.getByText(/DEV00/)).toBeInTheDocument();
-    expect(screen.getAllByText(/DEV01/).length).toBeGreaterThan(0);
-    expect(document.querySelector('.small-alert')).not.toBeInTheDocument();
-    expect(screen.getAllByText('미배정').length).toBeGreaterThan(0);
-    await user.click(screen.getByRole('button', { name: '다음 변경 이력 페이지' }));
-    await user.click((await screen.findAllByText('직원 정보 수정'))[1]);
-    expect(await screen.findByText('저장된 변경 이력을 읽을 수 없습니다.')).toBeInTheDocument();
-    expect(calls.some((url) => url.includes('/audit-logs?page=1&size=8'))).toBe(true);
-    await user.click(screen.getByRole('button', { name: '직원 상세 닫기' }));
-    await user.type(screen.getByRole('textbox', { name: '사번 또는 이름 검색' }), 'E1001');
-    await user.click(screen.getByRole('button', { name: /검색/ }));
-    await waitFor(() => expect(calls.some((url) => url.includes('keyword=E1001'))).toBe(true));
-  });
-});
-
-describe('employee detail layout previews', () => {
-  it('defaults to split and loads detail once from a non-name cell or the accessible employee button', async () => {
-    const calls: string[] = [];
-    stubFetch((url) => {
-      calls.push(url);
-      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
-      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
-      if (url === '/api/employees/7') return jsonResponse(employee);
-      if (url.startsWith('/api/employees/7/audit-logs')) return jsonResponse(emptyPage);
-      if (url.startsWith('/api/employees')) return jsonResponse({ ...emptyPage, content: [employee], totalElements: 1, totalPages: 1 });
-      throw new Error(`Unexpected ${url}`);
-    });
-    const user = userEvent.setup();
-    render(<MemoryRouter initialEntries={['/employees']}><AuthProvider><EmployeesPage /></AuthProvider></MemoryRouter>);
-    expect(await screen.findByText('DEV01')).toBeInTheDocument();
-    expect(document.querySelector('.employee-layout.prototype-split')).toBeInTheDocument();
-    await user.click(screen.getByText('DEV01'));
-    expect(await screen.findByRole('heading', { name: '직원 상세' })).toBeInTheDocument();
-    expect(calls.filter((url) => url === '/api/employees/7')).toHaveLength(1);
-    expect(calls.filter((url) => url.startsWith('/api/employees/7/audit-logs'))).toHaveLength(1);
-
-    await user.click(screen.getByRole('button', { name: '김수인 E1001 상세 보기' }));
-    await waitFor(() => expect(calls.filter((url) => url === '/api/employees/7')).toHaveLength(2));
-    expect(calls.filter((url) => url.startsWith('/api/employees/7/audit-logs'))).toHaveLength(2);
-  });
-
-  it('brings split employee detail into view on narrow screens when a row is selected', async () => {
-    const originalWidth = window.innerWidth;
-    const scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
-    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
-    try {
-      stubFetch((url) => {
-        if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
-        if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
-        if (url === '/api/employees/7') return jsonResponse(employee);
-        if (url.startsWith('/api/employees/7/audit-logs')) return jsonResponse(emptyPage);
-        if (url.startsWith('/api/employees')) return jsonResponse({ ...emptyPage, content: [employee], totalElements: 1, totalPages: 1 });
-        throw new Error(`Unexpected ${url}`);
-      });
-      const user = userEvent.setup();
-      render(<MemoryRouter initialEntries={['/employees?variant=split']}><AuthProvider><EmployeesPage /></AuthProvider></MemoryRouter>);
-      const employeeButton = await screen.findByRole('button', { name: '김수인 E1001 상세 보기' });
-      await user.click(employeeButton);
-      expect(await screen.findByText('직원 상세')).toBeInTheDocument();
-      expect(employeeButton).toHaveAttribute('aria-pressed', 'true');
-      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-    } finally {
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
-      if (scrollDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollDescriptor);
-      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+const employee = { id: 7, employeeNo: 'E1001', name: '김하린', email: 'user@company.com', departmentCode: 'DEV01', employmentStatus: 'ACTIVE', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z' };
+function installApi(paginated = false) {
+  const calls: string[] = [];
+  stubFetch((url) => {
+    calls.push(url);
+    if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+    if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+    if (url === '/api/employees/7') return jsonResponse(employee);
+    if (url.startsWith('/api/employees/7/audit-logs')) return jsonResponse({ ...emptyPage, content: [
+      { id: 10, action: 'UPDATED', source: 'HR_SYNC', changes: { departmentCode: { before: 'DEV00', after: 'DEV01' }, email: { before: 'old@company.com', after: null } }, changesParseError: false, createdAt: '2026-10-03T00:00:00Z' },
+      { id: 9, action: 'CREATED', source: 'HR_SYNC', changes: { employeeNo: 'E1001', name: '김하린', employmentStatus: 'ACTIVE' }, changesParseError: false, createdAt: '2026-10-01T00:00:00Z' },
+      { id: 8, action: 'UPDATED', source: 'HR_SYNC', changes: null, changesParseError: true, createdAt: '2026-09-30T00:00:00Z' },
+    ], totalElements: 3, totalPages: 1 });
+    if (url.startsWith('/api/employees')) {
+      const params = new URLSearchParams(url.split('?')[1]);
+      return jsonResponse({ ...emptyPage, content: [employee], page: Number(params.get('page') ?? 0), size: Number(params.get('size') ?? 20), totalElements: paginated ? 100 : 1, totalPages: paginated ? 5 : 1 });
     }
+    throw new Error(`Unexpected ${url}`);
+  });
+  return calls;
+}
+function renderRoutes(path = '/employees') {
+  return render(<MemoryRouter initialEntries={[path]}><AuthProvider><Routes>
+    <Route path="/employees" element={<EmployeesPage />} /><Route path="/employees/:employeeId" element={<EmployeeDetailPage />} />
+  </Routes></AuthProvider></MemoryRouter>);
+}
+
+describe('employee list and detail routes', () => {
+  it('opens detail by row click and shows expandable before/after audit history', async () => {
+    const calls = installApi();
+    const user = userEvent.setup();
+    renderRoutes();
+    await user.click(await screen.findByRole('row', { name: /김하린 E1001/ }));
+    expect(await screen.findByRole('heading', { name: '김하린' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '기본 정보' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '변경 이력' })).toBeInTheDocument();
+    expect(screen.getAllByText('E1001').length).toBeGreaterThan(0);
+    expect(screen.getByText('user@company.com')).toBeInTheDocument();
+    const changeEvent = document.querySelector('.audit-entry');
+    expect(changeEvent).toHaveTextContent('직원 정보 변경');
+    expect(changeEvent).toHaveTextContent('HR 시스템');
+    expect(changeEvent?.querySelector('time')).toBeInTheDocument();
+    expect(screen.getByText('DEV00')).toBeInTheDocument();
+    expect(screen.getAllByText('DEV01').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('columnheader', { name: '항목' })).toHaveLength(2);
+    expect(screen.getAllByRole('columnheader', { name: '이전' })).toHaveLength(2);
+    expect(screen.getAllByRole('columnheader', { name: '변경 후' })).toHaveLength(2);
+    const createEvent = screen.getByText('직원 등록').closest('.audit-entry');
+    expect(createEvent).toHaveTextContent('이름');
+    expect(createEvent).toHaveTextContent('김하린');
+    expect(createEvent).toHaveTextContent('사번');
+    expect(createEvent).toHaveTextContent('E1001');
+    expect(createEvent?.querySelector('tbody tr')).toHaveTextContent('-');
+    expect(screen.getByText('저장된 변경 이력을 읽을 수 없습니다.')).toBeInTheDocument();
+    expect(calls.filter((url) => url === '/api/employees/7')).toHaveLength(1);
   });
 
-  it('switches directly to the selected employee workspace when a row is clicked', async () => {
-    stubFetch((url) => {
-      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
-      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
-      if (url === '/api/employees/7') return jsonResponse(employee);
-      if (url.startsWith('/api/employees/7/audit-logs')) return jsonResponse(emptyPage);
-      if (url.startsWith('/api/employees')) return jsonResponse({ ...emptyPage, content: [employee], totalElements: 1, totalPages: 1 });
-      throw new Error(`Unexpected ${url}`);
-    });
+  it('supports keyboard row navigation, direct detail URLs, and the list return link', async () => {
+    installApi();
     const user = userEvent.setup();
-    render(providers(<EmployeesPage />, '/employees?variant=workspace'));
-    await user.click(await screen.findByRole('button', { name: '김수인 E1001 상세 보기' }));
-    expect(await screen.findByRole('button', { name: /직원 목록으로 돌아가기/ })).toBeInTheDocument();
-    expect(await screen.findByRole('heading', { name: '김수인' })).toBeInTheDocument();
+    renderRoutes('/employees/7');
+    expect(await screen.findByRole('heading', { name: '김하린' })).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: /직원 목록/ }));
+    const row = await screen.findByRole('row', { name: /김하린 E1001/ });
+    row.focus();
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('heading', { name: '김하린' })).toBeInTheDocument();
+    expect(row).toHaveAttribute('tabindex', '0');
   });
 
-  it('keeps the selected employee while switching layouts and restores focus when the drawer closes', async () => {
-    stubFetch((url) => {
-      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
-      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
-      if (url === '/api/employees/7') return jsonResponse(employee);
-      if (url.startsWith('/api/employees/7/audit-logs')) return jsonResponse(emptyPage);
-      if (url.startsWith('/api/employees')) return jsonResponse({ ...emptyPage, content: [employee], totalElements: 1, totalPages: 1 });
-      throw new Error(`Unexpected ${url}`);
-    });
-    function LocationProbe() { const location = useLocation(); return <output aria-label="현재 주소">{location.pathname + location.search}</output>; }
+  it('applies search and status filters through the existing employee API', async () => {
+    const calls = installApi();
     const user = userEvent.setup();
-    render(<MemoryRouter initialEntries={['/employees?variant=split']}><AuthProvider><><EmployeesPage /><LocationProbe /></></AuthProvider></MemoryRouter>);
-    await user.click(await screen.findByRole('button', { name: '김수인 E1001 상세 보기' }));
-    await screen.findByText('직원 상세');
-    await user.click(screen.getByRole('button', { name: '다음 화면 구성' }));
-    expect(await screen.findByRole('dialog', { name: '김수인 직원 상세' })).toBeInTheDocument();
-    expect(screen.getByLabelText('현재 주소')).toHaveTextContent('/employees?variant=drawer');
-    await user.click(screen.getByRole('button', { name: '다음 화면 구성' }));
-    expect(await screen.findByRole('button', { name: /직원 목록으로 돌아가기/ })).toBeInTheDocument();
-    expect(screen.getByText('김수인')).toBeInTheDocument();
-    expect(screen.getByLabelText('현재 주소')).toHaveTextContent('/employees?variant=workspace');
-    await user.click(screen.getByRole('button', { name: '이전 화면 구성' }));
-    expect(await screen.findByRole('dialog', { name: '김수인 직원 상세' })).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '김수인 E1001 상세 보기' }));
+    renderRoutes();
+    await screen.findByRole('row', { name: /김하린 E1001/ });
+    await user.type(screen.getByRole('textbox', { name: '사번 또는 이름 검색' }), 'E1001');
+    await user.click(screen.getByRole('combobox', { name: '재직 상태 필터' }));
+    await user.click(screen.getByRole('option', { name: '휴직' }));
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(calls.some((url) => url.includes('keyword=E1001') && url.includes('employmentStatus=ON_LEAVE'))).toBe(true));
+  });
+
+  it('resets employee search and status to the unfiltered first page', async () => {
+    const calls = installApi();
+    const user = userEvent.setup();
+    renderRoutes();
+    await screen.findByRole('row', { name: /김하린 E1001/ });
+    await user.type(screen.getByRole('textbox', { name: '사번 또는 이름 검색' }), 'E1001');
+    await user.click(screen.getByRole('combobox', { name: '재직 상태 필터' }));
+    await user.click(screen.getByRole('option', { name: '휴직' }));
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(calls.some((url) => url.includes('keyword=E1001') && url.includes('employmentStatus=ON_LEAVE'))).toBe(true));
+
+    await user.click(screen.getByRole('button', { name: '초기화' }));
+    await waitFor(() => expect(calls.some((url) => url === '/api/employees?page=0&size=20')).toBe(true));
+    expect(screen.getByRole('textbox', { name: '사번 또는 이름 검색' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: '재직 상태 필터' })).toHaveTextContent('모든 재직 상태');
+  });
+
+  it('uses zero-based page requests and resets to the first page when page size changes', async () => {
+    const calls = installApi(true);
+    const user = userEvent.setup();
+    renderRoutes();
+    await screen.findByRole('row', { name: /김하린 E1001/ });
+
+    await user.click(screen.getByRole('button', { name: '3페이지' }));
+    await waitFor(() => expect(calls.some((url) => url.includes('page=2') && url.includes('size=20'))).toBe(true));
+    await user.click(screen.getByRole('button', { name: '다음 페이지' }));
+    await waitFor(() => expect(calls.some((url) => url.includes('page=3') && url.includes('size=20'))).toBe(true));
+    await user.click(screen.getByRole('button', { name: '이전 페이지' }));
+    await waitFor(() => expect(calls.filter((url) => url.includes('page=2') && url.includes('size=20')).length).toBeGreaterThan(1));
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '페이지당 표시 건수' }), '10');
+    await waitFor(() => expect(calls.some((url) => url.includes('page=0') && url.includes('size=10'))).toBe(true));
+  });
+
+  it('sorts on the server and retains sorting when filters and page size change', async () => {
+    const calls = installApi(true);
+    const user = userEvent.setup();
+    renderRoutes();
+    await screen.findByRole('row', { name: /김하린 E1001/ });
+    await user.click(screen.getByRole('button', { name: '3페이지' }));
+    await waitFor(() => expect(calls.some((url) => url.includes('page=2') && url.includes('size=20'))).toBe(true));
+    const employeeHeader = screen.getByRole('columnheader', { name: /직원/ });
+    await user.click(within(employeeHeader).getByRole('button'));
+    await waitFor(() => expect(calls.some((url) => url.includes('sortBy=employeeNo') && url.includes('sortDirection=ASC') && url.includes('page=0'))).toBe(true));
+    expect(screen.getByRole('columnheader', { name: /직원/ })).toHaveAttribute('aria-sort', 'ascending');
+    await user.click(within(screen.getByRole('columnheader', { name: /직원/ })).getByRole('button'));
+    await waitFor(() => expect(calls.some((url) => url.includes('sortBy=employeeNo') && url.includes('sortDirection=DESC'))).toBe(true));
+    await user.type(screen.getByRole('textbox', { name: '사번 또는 이름 검색' }), 'E1001');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(calls.some((url) => url.includes('keyword=E1001') && url.includes('sortDirection=DESC'))).toBe(true));
+    await user.selectOptions(screen.getByRole('combobox', { name: '페이지당 표시 건수' }), '10');
+    await waitFor(() => expect(calls.some((url) => url.includes('size=10') && url.includes('sortBy=employeeNo') && url.includes('sortDirection=DESC'))).toBe(true));
   });
 });
