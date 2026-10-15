@@ -1,16 +1,35 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { Dashboard } from './Dashboard';
 import { AuthProvider } from '../../auth/AuthContext';
 import { MemoryRouter } from 'react-router-dom';
-import { emptyPage, jsonResponse, providers, stubFetch } from '../../test/helpers';
+import { deferred, emptyPage, jsonResponse, providers, stubFetch } from '../../test/helpers';
 import { DemoProvider } from '../demo/DemoContext';
 
 const latest = { syncJobId: 8, status: 'COMPLETED', totalCount: 9, insertedCount: 2, updatedCount: 3, skippedCount: 4, failedCount: 0, failureCode: null, startedAt: '2026-10-08T00:00:00Z', finishedAt: null };
 const older = { ...latest, syncJobId: 3, totalCount: 1, insertedCount: 1, updatedCount: 0, skippedCount: 0 };
 
 describe('dashboard sync job sorting', () => {
+  it('shows a dashboard-shaped skeleton only during the first load', async () => {
+    const jobsRequest = deferred<Response>();
+    const failedRequest = deferred<Response>();
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url.startsWith('/api/sync-jobs')) return jobsRequest.promise;
+      if (url.startsWith('/api/integration-tasks')) return failedRequest.promise;
+      throw new Error(`Unexpected ${url}`);
+    });
+    render(providers(<Dashboard />));
+    expect(await screen.findByRole('status')).toHaveTextContent('대시보드 정보를 불러오는 중');
+    expect(document.querySelectorAll('.skeleton-table-row')).toHaveLength(5);
+    expect(screen.getByRole('button', { name: '동기화 실행' })).toBeInTheDocument();
+    await act(async () => { jobsRequest.resolve(jsonResponse(emptyPage)); failedRequest.resolve(jsonResponse(emptyPage)); });
+    expect(await screen.findByText('표시할 동기화 작업이 없습니다.')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+  });
+
   it('sorts the table without changing the latest job or summary', async () => {
     const calls: string[] = [];
     stubFetch((url) => {
@@ -145,7 +164,7 @@ describe('dashboard demo context and workflow', () => {
     });
     render(providers(<DemoProvider><Dashboard /></DemoProvider>));
 
-    const count = await screen.findByText('0건');
+    const count = await screen.findByText('0건', { selector: '.attention-count' });
     expect(count).not.toHaveClass('has-failures');
   });
 });

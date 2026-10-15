@@ -4,6 +4,7 @@ import { queryString, request } from '../../api/client';
 import type { AuditLog, Employee, Page } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { StatusBadge } from '../../components/StatusBadge';
+import { Skeleton, SkeletonRegion, SkeletonTimeline } from '../../components/Skeleton';
 
 const fieldNames: Record<string, string> = { employeeNo: '사번', name: '이름', email: '회사 이메일', departmentCode: '부서 코드', employmentStatus: '재직 상태' };
 const statuses: Record<string, string> = { ACTIVE: '재직', ON_LEAVE: '휴직', TERMINATED: '퇴사' };
@@ -18,7 +19,6 @@ export function EmployeeDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const loadHistory = useCallback(async (targetPage: number) => {
-    setHistory(null);
     try { setHistory(await request<Page<AuditLog>>(`/api/employees/${id}/audit-logs${queryString({ page: targetPage, size: 8 })}`, {}, expireSession, csrfRejected)); }
     catch (failure) { setError(failure instanceof Error ? failure.message : '변경 이력을 불러오지 못했습니다.'); }
   }, [csrfRejected, expireSession, id]);
@@ -42,13 +42,16 @@ export function EmployeeDetailPage() {
       {employee && <div className="employee-heading-meta"><span className="mono">{employee.employeeNo}</span><span aria-hidden="true">·</span><StatusBadge value={employee.employmentStatus} /></div>}
     </div></div>
     {error && <div className="alert error" role="alert">{error}</div>}
-    {loading && !employee ? <div className="loading-inline">직원 정보를 불러오는 중</div> : employee && <>
+    {loading && !employee && !error ? <SkeletonRegion label="직원 정보를 불러오는 중" className="employee-detail-skeleton">
+      <section className="detail-section employee-info-section"><Skeleton width={82} height={16} /><div className="skeleton-fields">{Array.from({ length: 4 }, (_, index) => <div key={index}><Skeleton width="34%" height={10} /><Skeleton width={index % 2 ? '66%' : '52%'} /></div>)}</div></section>
+      <section className="detail-section audit-section"><Skeleton width={92} height={16} /><SkeletonTimeline events={3} /></section>
+    </SkeletonRegion> : employee && <>
       <section className="detail-section employee-info-section"><h2>기본 정보</h2><dl className="detail-fields">
         <Field label="회사 이메일" value={employee.email ?? '미배정'} /><Field label="부서 코드" value={employee.departmentCode ?? '미배정'} />
         <Field label="등록일" value={date(employee.createdAt)} /><Field label="최근 변경" value={date(employee.updatedAt)} />
       </dl></section>
       <section className="detail-section audit-section"><div className="section-title"><div><p className="eyebrow">직원 변경 내역</p><h2>변경 이력</h2></div><span className="count-pill">{history?.totalElements ?? 0}건</span></div>
-        {!history ? <div className="loading-inline">변경 이력을 불러오는 중</div> : history.content.length === 0 ? <p className="muted">변경 이력이 없습니다.</p> : <>
+        {!history ? <SkeletonRegion label="변경 이력을 불러오는 중"><SkeletonTimeline events={3} /></SkeletonRegion> : history.content.length === 0 ? <p className="muted">변경 이력이 없습니다.</p> : <>
           <div className="timeline">{history.content.map((log, index) => <AuditEntry key={log.id} log={log} isLatest={page === 0 && index === 0} />)}</div>
           {history.totalPages > 1 && <div className="pager"><span>{page + 1} / {history.totalPages}</span><div><button aria-label="이전 변경 이력 페이지" disabled={page <= 0} onClick={() => void changePage(page - 1)}>이전</button><button aria-label="다음 변경 이력 페이지" disabled={page + 1 >= history.totalPages} onClick={() => void changePage(page + 1)}>다음</button></div></div>}
         </>}

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { IntegrationsPage } from './IntegrationsPage';
 import { IntegrationDetailPage } from './IntegrationDetailPage';
 import { AuthProvider } from '../../auth/AuthContext';
-import { emptyPage, jsonResponse, stubFetch } from '../../test/helpers';
+import { deferred, emptyPage, jsonResponse, stubFetch } from '../../test/helpers';
 
 const task = { id: 5, employeeNo: 'E1002', action: 'UPDATE_ACCOUNT', status: 'FAILED', retryCount: 3, maxRetryCount: 3, lastErrorCode: 'GROUPWARE_HTTP_ERROR', createdAt: '2026-10-05T00:00:00Z', updatedAt: '2026-10-05T00:00:01Z' };
 function renderRoutes(path = '/integrations') {
@@ -18,6 +18,33 @@ async function flushImmediateWork() {
 }
 
 describe('integration task routes', () => {
+  it('shows aligned initial table rows then replaces them with the empty result', async () => {
+    const pending = deferred<Response>();
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url.startsWith('/api/integration-tasks')) return pending.promise;
+      throw new Error(`Unexpected ${url}`);
+    });
+    const firstRender = renderRoutes();
+    expect(await screen.findByRole('status')).toHaveTextContent('작업 목록을 불러오는 중');
+    expect(document.querySelectorAll('.skeleton-table-row')).toHaveLength(7);
+    await act(async () => pending.resolve(jsonResponse(emptyPage)));
+    expect(await screen.findByText('조건에 맞는 작업이 없습니다.')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+    firstRender.unmount();
+
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url.startsWith('/api/integration-tasks')) return jsonResponse({ message: 'unavailable' }, 503);
+      throw new Error(`Unexpected ${url}`);
+    });
+    renderRoutes();
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+  });
+
   it('opens details from the list, shows failure and attempts, and retries eligible failures', async () => {
     let status = 'FAILED';
     const calls: { url: string; method: string }[] = [];

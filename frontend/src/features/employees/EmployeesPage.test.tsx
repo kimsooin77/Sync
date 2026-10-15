@@ -1,11 +1,11 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { EmployeesPage } from './EmployeesPage';
 import { EmployeeDetailPage } from './EmployeeDetailPage';
 import { AuthProvider } from '../../auth/AuthContext';
-import { emptyPage, jsonResponse, stubFetch } from '../../test/helpers';
+import { deferred, emptyPage, jsonResponse, stubFetch } from '../../test/helpers';
 
 const employee = { id: 7, employeeNo: 'E1001', name: '김하린', email: 'user@company.com', departmentCode: 'DEV01', employmentStatus: 'ACTIVE', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z' };
 function installApi(paginated = false) {
@@ -35,6 +35,81 @@ function renderRoutes(path = '/employees') {
 }
 
 describe('employee list and detail routes', () => {
+  it('uses an initial detail and audit timeline skeleton, then shows an empty history state', async () => {
+    const employeeRequest = deferred<Response>();
+    const historyRequest = deferred<Response>();
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url === '/api/employees/7') return employeeRequest.promise;
+      if (url.startsWith('/api/employees/7/audit-logs')) return historyRequest.promise;
+      throw new Error(`Unexpected ${url}`);
+    });
+    renderRoutes('/employees/7');
+    expect(await screen.findByRole('status')).toHaveTextContent('직원 정보를 불러오는 중');
+    expect(document.querySelectorAll('.skeleton-timeline-event')).toHaveLength(3);
+    await act(async () => {
+      employeeRequest.resolve(jsonResponse(employee));
+      historyRequest.resolve(jsonResponse(emptyPage));
+    });
+    expect(await screen.findByRole('heading', { name: '김하린' })).toBeInTheDocument();
+    expect(screen.getByText('변경 이력이 없습니다.')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+  });
+
+  it('keeps the current audit entries visible while another history page loads', async () => {
+    const nextPage = deferred<Response>();
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url === '/api/employees/7') return jsonResponse(employee);
+      if (url.startsWith('/api/employees/7/audit-logs')) {
+        const page = new URLSearchParams(url.split('?')[1]).get('page');
+        if (page === '1') return nextPage.promise;
+        return jsonResponse({ ...emptyPage, content: [{ id: 10, action: 'UPDATED', source: 'HR_SYNC', changes: { name: { before: 'Previous', after: 'Previous Updated' } }, changesParseError: false, createdAt: '2026-10-03T00:00:00Z' }], totalElements: 9, totalPages: 2 });
+      }
+      throw new Error(`Unexpected ${url}`);
+    });
+    const user = userEvent.setup();
+    renderRoutes('/employees/7');
+    expect(await screen.findByText('Previous Updated')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '다음 변경 이력 페이지' }));
+    expect(screen.getByText('Previous Updated')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+    await act(async () => nextPage.resolve(jsonResponse({ ...emptyPage, page: 1, content: [{ id: 9, action: 'CREATED', source: 'HR_SYNC', changes: { name: 'Next Page Record' }, changesParseError: false, createdAt: '2026-10-01T00:00:00Z' }], totalElements: 9, totalPages: 2 })));
+    expect(await screen.findByText('Next Page Record')).toBeInTheDocument();
+    expect(screen.queryByText('Previous Updated')).not.toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+  });
+
+  it('shows table skeleton rows only during the initial request and keeps empty and error states distinct', async () => {
+    const pending = deferred<Response>();
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url.startsWith('/api/employees')) return pending.promise;
+      throw new Error(`Unexpected ${url}`);
+    });
+    const firstRender = renderRoutes();
+    expect(await screen.findByRole('status')).toHaveTextContent('직원 정보를 불러오는 중');
+    expect(document.querySelectorAll('.skeleton-table-row')).toHaveLength(7);
+    await act(async () => pending.resolve(jsonResponse({ ...emptyPage, totalElements: 0 })));
+    expect(await screen.findByText('직원이 없습니다.')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+    firstRender.unmount();
+
+    stubFetch((url) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url.startsWith('/api/employees')) return jsonResponse({ message: 'unavailable' }, 503);
+      throw new Error(`Unexpected ${url}`);
+    });
+    renderRoutes();
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+  });
+
   it('opens detail by row click and shows expandable before/after audit history', async () => {
     const calls = installApi();
     const user = userEvent.setup();

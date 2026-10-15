@@ -7,6 +7,7 @@ import { Pagination } from '../../components/Pagination';
 import { SelectField } from '../../components/SelectField';
 import { StatusBadge } from '../../components/StatusBadge';
 import { SortableHeader } from '../../components/SortableHeader';
+import { SkeletonRegion, SkeletonTableRows } from '../../components/Skeleton';
 
 const statuses = [
   { value: '', label: '모든 재직 상태' }, { value: 'ACTIVE', label: '재직' },
@@ -48,7 +49,7 @@ export function EmployeesPage() {
     {error && <div className="alert error" role="alert">{error}</div>}
     <section className="data-section employee-list-card">
       <div className="section-title"><div><p className="eyebrow">직원 정보</p><h2>직원 목록</h2></div><div className="list-actions">{loading && <span className="small muted">갱신 중</span>}<button className="secondary compact-button" aria-label="직원 새로고침" onClick={() => void loadEmployees()}>새로고침</button></div></div>
-      {!result ? <div className="loading-inline">직원 정보를 불러오는 중</div> : result.content.length === 0 ? <p className="table-empty">직원이 없습니다.</p> : <>
+      {!result && error ? null : !result ? <SkeletonRegion label="직원 정보를 불러오는 중" className="table-wrap"><table><thead><tr><th>직원</th><th>회사 이메일</th><th>부서</th><th>재직 상태</th><th>등록일</th><th aria-label="상세 보기" /></tr></thead><tbody><SkeletonTableRows rows={7} columns={6} /></tbody></table></SkeletonRegion> : result.content.length === 0 ? <p className="table-empty">직원이 없습니다.</p> : <>
         <div className="table-wrap"><table><thead><tr><SortableHeader label="직원" sortKey="employeeNo" activeSort={sort} onSort={toggleSort} /><SortableHeader label="회사 이메일" sortKey="email" activeSort={sort} onSort={toggleSort} /><SortableHeader label="부서" sortKey="departmentCode" activeSort={sort} onSort={toggleSort} /><SortableHeader label="재직 상태" sortKey="employmentStatus" activeSort={sort} onSort={toggleSort} /><SortableHeader label="등록일" sortKey="createdAt" activeSort={sort} onSort={toggleSort} /><th aria-label="상세 보기" /></tr></thead><tbody>
           {result.content.map((item) => <tr key={item.id} tabIndex={0} onClick={() => navigate(`/employees/${item.id}`)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(`/employees/${item.id}`); } }}>
             <td><span className="person-select"><span className="person-avatar">{item.name.slice(0, 1)}</span><span><b>{item.name}</b><small className="mono">{item.employeeNo}</small></span></span></td>

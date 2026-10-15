@@ -3,6 +3,7 @@ import { request } from '../../api/client';
 import type { FailureMode, HrScenario } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { SelectField } from '../../components/SelectField';
+import { Skeleton } from '../../components/Skeleton';
 import { useDemoSettings } from './DemoContext';
 
 const scenarios: { value: HrScenario; label: string }[] = [
@@ -30,14 +31,14 @@ export function DemoSettings() {
   const [employeeNo, setEmployeeNo] = useState('');
   const [mode, setMode] = useState<FailureMode>('NORMAL');
   const [delayMs, setDelayMs] = useState('1000');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!scenario || !simulation);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (!scenario || !simulation) setLoading(true);
     setError(null);
     void refresh().then((result) => {
       if (!active) return;
@@ -96,13 +97,14 @@ export function DemoSettings() {
   return <div className="scenario-page">
     <div className="page-heading"><div><p className="eyebrow">외부 연계 설정</p><h1 ref={headingRef} tabIndex={-1}>연계 시나리오</h1><p className="muted demo-page-description">HR 입력 상황과 직원별 외부 응답을 구성해 연계 실패, 재시도, 복구 과정을 확인합니다.</p></div></div>
     {error && <div className="alert error" role="alert">{error}</div>}{notice && <div className="alert success" role="status">{notice}</div>}
-    {loading ? <p className="loading-inline">설정을 불러오는 중…</p> : <>
+    <div className="scenario-content" aria-busy={loading}>
+      {loading && <span className="visually-hidden" role="status">시나리오 설정을 불러오는 중</span>}
       <section className="demo-setting-section"><h3>HR 데이터 시나리오</h3>
-        <label className="field-stack"><span>직원 데이터</span><SelectField label="HR 직원 데이터" value={scenario ?? ''} options={scenarios} disabled={busy || !scenario} onChange={(value) => void updateScenario(value as HrScenario)} /></label>
-        {scenario && <p className="muted small" role="status">{scenarioDescriptions[scenario]}</p>}
+        <label className="field-stack"><span>직원 데이터</span><div className="scenario-select-loading"><SelectField label="HR 직원 데이터" value={scenario ?? 'initial'} options={scenarios} disabled={busy || !scenario} onChange={(value) => void updateScenario(value as HrScenario)} />{loading && !scenario && <Skeleton className="scenario-select-skeleton" height={34} />}</div></label>
+        {loading && !scenario ? <Skeleton className="scenario-description-skeleton" width="55%" height={11} /> : scenario && <p className="muted small" role="status">{scenarioDescriptions[scenario]}</p>}
       </section>
       <section className="demo-setting-section"><h3>직원별 예외 규칙</h3>
-        <div className="default-rule"><span>기본 응답 <small>(읽기 전용)</small></span><b>{simulation ? modeLabel(simulation.defaultRule.mode) : '확인할 수 없음'}</b>{simulation?.defaultRule.mode === 'DELAY' && <small>{simulation.defaultRule.delayMs}ms</small>}</div>
+        <div className="default-rule"><span>기본 응답 <small>(읽기 전용)</small></span>{loading && !simulation ? <Skeleton className="scenario-default-skeleton" width={96} /> : <b>{simulation ? modeLabel(simulation.defaultRule.mode) : '확인할 수 없음'}</b>}{simulation?.defaultRule.mode === 'DELAY' && <small>{simulation.defaultRule.delayMs}ms</small>}</div>
         <form className="demo-override-form" onSubmit={(event) => void saveOverride(event)}>
           <label className="field-stack"><span>직원 사번</span><input aria-label="직원 사번" value={employeeNo} onChange={(event) => setEmployeeNo(event.target.value)} placeholder="예: E1002" /></label>
           <label className="field-stack"><span>응답 시나리오</span><SelectField label="응답 시나리오" value={mode} options={modes} onChange={(value) => setMode(value as FailureMode)} /></label>
@@ -110,10 +112,10 @@ export function DemoSettings() {
           <button className="secondary" type="submit" disabled={busy}>규칙 추가</button>
         </form>
         <div className="override-list"><div className="section-title"><h4>적용 중인 예외 규칙</h4><button className="secondary compact-button" type="button" onClick={() => void reloadRules()} disabled={busy || loading}>새로고침</button></div>
-          {!simulation || !Object.keys(simulation.overrides).length ? <p className="muted small">적용 중인 예외 규칙이 없습니다.</p> : Object.entries(simulation.overrides).map(([employee, rule]) => <div className="override-row" key={employee}><code>{employee}</code><span>{modeLabel(rule.mode)}{rule.mode === 'DELAY' ? ` · ${rule.delayMs}ms` : ''}</span><button className="text-button danger-text" aria-label={`${employee} 예외 규칙 삭제`} disabled={busy} onClick={() => void clearOverride(employee)}>삭제</button></div>)}
+          {loading && !simulation ? <div className="scenario-override-skeletons" aria-hidden="true">{Array.from({ length: 2 }, (_, index) => <div className="override-row" key={index}><Skeleton width="15%" /><Skeleton width="28%" /></div>)}</div> : !simulation || !Object.keys(simulation.overrides).length ? <p className="muted small">적용 중인 예외 규칙이 없습니다.</p> : Object.entries(simulation.overrides).map(([employee, rule]) => <div className="override-row" key={employee}><code>{employee}</code><span>{modeLabel(rule.mode)}{rule.mode === 'DELAY' ? ` · ${rule.delayMs}ms` : ''}</span><button className="text-button danger-text" aria-label={`${employee} 예외 규칙 삭제`} disabled={busy} onClick={() => void clearOverride(employee)}>삭제</button></div>)}
         </div>
       </section>
-    </>}
+    </div>
   </div>;
 }
 

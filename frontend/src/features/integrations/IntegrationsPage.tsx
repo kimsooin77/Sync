@@ -7,6 +7,7 @@ import { Pagination } from '../../components/Pagination';
 import { SelectField } from '../../components/SelectField';
 import { StatusBadge } from '../../components/StatusBadge';
 import { SortableHeader } from '../../components/SortableHeader';
+import { SkeletonRegion, SkeletonTableRows } from '../../components/Skeleton';
 import { errorName } from './errorMessages';
 
 const taskStates: { value: TaskStatus | ''; label: string }[] = [
@@ -53,7 +54,7 @@ export function IntegrationsPage() {
       <div className="filter-actions"><button className="secondary" type="button" onClick={resetFilters}>초기화</button><button className="primary" type="submit">검색</button></div>
     </form></section>
     <section className="data-section task-list-card"><div className="section-title"><div><p className="eyebrow">처리 내역</p><h2>외부 연계 작업 <span className="count-pill">{tasks?.totalElements ?? 0}</span></h2></div>{loading && <span className="small muted">갱신 중</span>}</div>
-      {!tasks ? <div className="loading-inline">작업 목록을 불러오는 중</div> : tasks.content.length === 0 ? <p className="table-empty">조건에 맞는 작업이 없습니다.</p> : <>
+      {error && !tasks ? null : !tasks ? <SkeletonRegion label="작업 목록을 불러오는 중" className="table-wrap"><table><thead><tr><th>작업</th><th>직원</th><th>처리 내용</th><th>상태</th><th>자동 재시도</th><th>최근 결과</th><th>처리 시각</th><th aria-label="상세 보기" /></tr></thead><tbody><SkeletonTableRows rows={7} columns={8} /></tbody></table></SkeletonRegion> : tasks.content.length === 0 ? <p className="table-empty">조건에 맞는 작업이 없습니다.</p> : <>
         <div className="table-wrap"><table><thead><tr><SortableHeader label="작업" sortKey="id" activeSort={sort} onSort={toggleSort} /><SortableHeader label="직원" sortKey="employeeNo" activeSort={sort} onSort={toggleSort} /><SortableHeader label="처리 내용" sortKey="action" activeSort={sort} onSort={toggleSort} /><SortableHeader label="상태" sortKey="status" activeSort={sort} onSort={toggleSort} /><SortableHeader label="자동 재시도" sortKey="retryCount" activeSort={sort} onSort={toggleSort} /><th>최근 결과</th><SortableHeader label="처리 시각" sortKey="updatedAt" activeSort={sort} onSort={toggleSort} /><th aria-label="상세 보기" /></tr></thead><tbody>
           {tasks.content.map((task) => <tr key={task.id} tabIndex={0} className="route-row" onClick={() => navigate(`/integrations/${task.id}`)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(`/integrations/${task.id}`); } }}>
             <td><Link className="row-link" to={`/integrations/${task.id}`} onClick={(event) => event.stopPropagation()}>#{task.id}</Link></td><td className="mono">{task.employeeNo}</td><td>{actionName(task.action)}</td><td><StatusBadge value={task.status} /></td>

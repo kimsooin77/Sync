@@ -1,13 +1,15 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { App } from './App';
 import { AuthProvider } from '../auth/AuthContext';
 import { BrowserRouter, MemoryRouter, useNavigate } from 'react-router-dom';
-import { jsonResponse, stubFetch } from '../test/helpers';
+import { deferred, jsonResponse, stubFetch } from '../test/helpers';
 
 const job = { syncJobId: 41, status: 'COMPLETED', totalCount: 4, insertedCount: 1, updatedCount: 2,
   skippedCount: 1, failedCount: 0, failureCode: null, failureMessage: null, startedAt: '2026-10-05T00:00:00Z', finishedAt: '2026-10-05T00:00:01Z' };
+const brandLettermark = 'ES';
 
 function BackButton() {
   const navigate = useNavigate();
@@ -15,6 +17,15 @@ function BackButton() {
 }
 
 describe('administrator shell and work dashboard', () => {
+  it('links the purple ES lettermark favicon', () => {
+    const html = readFileSync('index.html', 'utf8');
+    const icon = readFileSync('public/favicon.svg', 'utf8');
+    expect(html).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg"');
+    expect(icon).toContain('fill="#7259de"');
+    expect(icon).toMatch(/<text[^>]*>ES<\/text>/);
+    expect(icon).not.toMatch(/linearGradient|filter=|<path/i);
+  });
+
   it('opens a directly requested scenario route and returns through router history', async () => {
     stubFetch((url) => {
       if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
@@ -60,9 +71,12 @@ describe('administrator shell and work dashboard', () => {
     expect(brandLink).toHaveAttribute('href', '/');
     expect(brandLink).toHaveTextContent('Employee Sync');
     expect(within(brandLink).getByText('Employee Sync')).toHaveClass('brand-name');
-    const brandSymbol = brandLink.querySelector('.brand-symbol svg');
+    const brandSymbol = within(brandLink).getByTestId('brand-lettermark');
     expect(brandSymbol).toBeInTheDocument();
-    expect(brandSymbol).toHaveAttribute('data-icon', 'sync');
+    expect(brandSymbol).toHaveTextContent(brandLettermark);
+    expect(brandSymbol).toHaveClass('brand-symbol');
+    expect(brandSymbol).toHaveAttribute('aria-hidden', 'true');
+    expect(brandSymbol.querySelector('svg')).toBeNull();
     const integrationLink = within(sidebar).getByRole('link', { name: '외부 연계' });
     expect(integrationLink).toHaveAttribute('title', '외부 연계');
     const integrationIcon = within(integrationLink).getByTestId('integration-nav-icon');
@@ -87,7 +101,7 @@ describe('administrator shell and work dashboard', () => {
     expect(within(sidebar).queryByText('ADMIN CONSOLE')).not.toBeInTheDocument();
     expect(within(sidebar).queryByText('People Ops')).not.toBeInTheDocument();
     expect(within(sidebar).queryByText('SYNC CONSOLE')).not.toBeInTheDocument();
-    expect(within(sidebar).queryByText('ES')).not.toBeInTheDocument();
+    expect(within(sidebar).getByTestId('brand-lettermark')).toHaveTextContent(brandLettermark);
     expect(within(sidebar).getByRole('link', { name: '연계 시나리오' })).toHaveAttribute('title', '연계 시나리오');
     expect(within(sidebar).queryByText('DEMO')).not.toBeInTheDocument();
     expect(integrationLink.querySelector('.nav-icon')).toBe(integrationIcon.parentElement);
@@ -153,27 +167,34 @@ describe('administrator shell and work dashboard', () => {
     render(<BrowserRouter><AuthProvider><App /></AuthProvider></BrowserRouter>);
 
     expect(await screen.findByText('admin', { exact: true })).toBeInTheDocument();
-    expect(screen.getByText('qwe123!', { exact: true })).toBeInTheDocument();
+    const loginSymbol = screen.getByTestId('brand-lettermark');
+    expect(loginSymbol).toHaveTextContent(brandLettermark);
+    expect(loginSymbol).toHaveAttribute('aria-hidden', 'true');
+    expect(loginSymbol).toHaveClass('brand-symbol', 'login-brand-symbol');
+    expect(loginSymbol).not.toHaveClass('brand-mark', 'brand-mark--large');
+    expect(loginSymbol.querySelector('svg')).toBeNull();
+    expect(screen.getByText('1q2w3e4r!@#$', { exact: true })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '데모 계정 입력' }));
     expect(screen.getByLabelText('관리자 아이디')).toHaveValue('admin');
-    expect(screen.getByLabelText('비밀번호')).toHaveValue('qwe123!');
+    expect(screen.getByLabelText('비밀번호')).toHaveValue('1q2w3e4r!@#$');
     await user.click(screen.getByRole('button', { name: '로그인' }));
 
     await screen.findByRole('heading', { name: '직원 동기화' });
     const login = calls.find((call) => call.url === '/api/auth/login');
     expect(login?.method).toBe('POST');
-    expect(JSON.parse(login?.body ?? '{}')).toEqual({ username: 'admin', password: 'qwe123!' });
+    expect(JSON.parse(login?.body ?? '{}')).toEqual({ username: 'admin', password: '1q2w3e4r!@#$' });
     expect(login?.headers.get('X-CSRF-TOKEN')).toBe('csrf');
   });
 
   it('shows operational summary and starts synchronization independently from demo APIs', async () => {
     const calls: { url: string; method: string; headers: Headers }[] = [];
+    const syncRequest = deferred<Response>();
     let syncCount = 0;
     stubFetch((url, init) => {
       calls.push({ url, method: init.method ?? 'GET', headers: new Headers(init.headers) });
       if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
       if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
-      if (url.startsWith('/api/sync-jobs') && init.method === 'POST') { syncCount++; return jsonResponse({ ...job, syncJobId: 42, status: 'RUNNING' }); }
+      if (url.startsWith('/api/sync-jobs') && init.method === 'POST') { syncCount++; return syncRequest.promise; }
       if (url === '/api/sync-jobs' && init.method === 'POST') return jsonResponse({ ...job, syncJobId: 43 });
       if (url.startsWith('/api/sync-jobs')) return jsonResponse({ content: [job], page: 0, size: 8, totalElements: 1, totalPages: 1 });
       if (url.startsWith('/api/integration-tasks')) return jsonResponse({ content: [], page: 0, size: 5, totalElements: 0, totalPages: 0 });
@@ -222,6 +243,10 @@ describe('administrator shell and work dashboard', () => {
     expect(await screen.findByRole('heading', { name: '직원 동기화' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '동기화 실행' }));
+    expect(screen.getByRole('button', { name: '동기화 요청 중…' })).toBeDisabled();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+    expect(screen.getAllByText('#41').length).toBeGreaterThan(0);
+    await act(async () => syncRequest.resolve(jsonResponse({ ...job, syncJobId: 42, status: 'RUNNING' })));
     expect(await screen.findByText(/동기화 작업 #42을 시작했습니다/)).toBeInTheDocument();
     expect(syncCount).toBe(1);
     expect(calls.find((call) => call.url === '/api/sync-jobs' && call.method === 'POST')?.headers.get('X-CSRF-TOKEN')).toBe('csrf');

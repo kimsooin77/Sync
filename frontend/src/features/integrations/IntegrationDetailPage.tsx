@@ -4,6 +4,7 @@ import { queryString, request } from '../../api/client';
 import type { Attempt, Page, RetryResult, TaskAction, TaskDetail } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { StatusBadge } from '../../components/StatusBadge';
+import { Skeleton, SkeletonRegion, SkeletonTimeline } from '../../components/Skeleton';
 import { errorName } from './errorMessages';
 
 const retryable = new Set(['GROUPWARE_HTTP_ERROR', 'GROUPWARE_CONNECTION_ERROR', 'GROUPWARE_TIMEOUT', 'GROUPWARE_RESPONSE_INVALID', 'PROCESSING_RECOVERY_EXHAUSTED']);
@@ -59,7 +60,11 @@ export function IntegrationDetailPage() {
       {detail && <div className="integration-heading-meta"><StatusBadge value={detail.status} /><span>사번 <b className="mono">{detail.employeeNo}</b></span><span>{actionName(detail.action)}</span></div>}
     </div><div className="detail-heading-actions"><button className="secondary compact-button" onClick={() => void loadDetail(attemptPage)} disabled={loading}>새로고침</button></div></div>
     {notice && <div className="alert success" role="status">{notice}</div>}{error && <div className="alert error" role="alert">{error}</div>}
-    {loading && !detail ? <div className="loading-inline">외부 연계 작업 정보를 불러오는 중</div> : detail && <>
+    {loading && !detail && !error ? <SkeletonRegion label="외부 연계 작업 정보를 불러오는 중" className="integration-detail-skeleton">
+      <section className="detail-section integration-result-section"><div className="section-title"><Skeleton width={84} height={16} /><Skeleton width={72} height={28} /></div><div className="skeleton-fields four">{Array.from({ length: 4 }, (_, index) => <div key={index}><Skeleton width="44%" height={10} /><Skeleton width={index % 2 ? '76%' : '58%'} /></div>)}</div></section>
+      <section className="detail-section attempt-section"><div className="section-title"><Skeleton width={80} height={16} /><Skeleton width={36} height={18} /></div><SkeletonTimeline events={3} /></section>
+      <div className="skeleton-outline"><Skeleton width={88} height={13} /></div><div className="skeleton-outline"><Skeleton width={72} height={13} /></div>
+    </SkeletonRegion> : detail && <>
       <section className="detail-section integration-result-section"><div className="section-title"><h2>처리 결과</h2>{detail.status === 'FAILED' && detail.lastErrorCode && retryable.has(detail.lastErrorCode) && <button className="primary retry-action" disabled={retryBusy} onClick={() => void retryTask()}>{retryBusy ? '요청 중…' : '수동 재처리'}</button>}</div>
         {detail.status === 'FAILED' && <p className="integration-latest-result">{errorName(detail.lastErrorCode) ?? (detail.lastErrorMessage ? '외부 시스템 처리 실패' : '외부 시스템 처리에 실패했습니다.')}</p>}
         <dl className="detail-fields retry-summary">

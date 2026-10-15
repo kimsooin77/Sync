@@ -15,3 +15,9 @@ export function stubFetch(handler: (url: string, init: RequestInit) => Response 
   return fetchMock;
 }
 export const emptyPage = { content: [], page: 0, size: 10, totalElements: 0, totalPages: 0 };
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
+}

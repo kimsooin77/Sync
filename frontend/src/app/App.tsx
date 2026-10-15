@@ -2,6 +2,7 @@ import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from
 import { useState } from 'react';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { BrandSymbol } from '../components/BrandSymbol';
 import { Dashboard } from '../features/dashboard/Dashboard';
 import { EmployeesPage } from '../features/employees/EmployeesPage';
 import { IntegrationsPage } from '../features/integrations/IntegrationsPage';
@@ -24,9 +25,9 @@ function LoginPage() {
     finally { setBusy(false); }
   }
   return <main className="login-page"><form className="login-card" onSubmit={submit}>
-    <div className="brand-mark">ES</div><p className="eyebrow">EMPLOYEE LIFECYCLE SYNC</p>
+    <BrandSymbol className="login-brand-symbol" /><p className="eyebrow">EMPLOYEE LIFECYCLE SYNC</p>
     <h1>관리자 로그인</h1><p className="muted">직원 동기화와 외부 계정 처리 현황을 관리합니다.</p>
-    <div className="demo-credentials"><p>데모 계정 <strong>admin</strong> / <strong>qwe123!</strong></p><button className="text-button" type="button" onClick={() => { setUsername('admin'); setPassword('qwe123!'); clearError(); }}>데모 계정 입력</button></div>
+    <div className="demo-credentials"><p>데모 계정 <strong>admin</strong> / <strong>1q2w3e4r!@#$</strong></p><button className="text-button" type="button" onClick={() => { setUsername('admin'); setPassword('1q2w3e4r!@#$'); clearError(); }}>데모 계정 입력</button></div>
     <label>관리자 아이디<input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required /></label>
     <label>비밀번호<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
     {error && <div className="alert error" role="alert">{error}</div>}
@@ -51,11 +52,7 @@ function Shell() {
     <aside className="sidebar" data-testid="app-sidebar">
       <div className="brand">
         <Link className="brand-link" to="/" aria-label="대시보드로 이동" data-testid="brand-dashboard-link">
-          <span className="brand-symbol" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false" data-icon="sync">
-              <path d="M17 3l4 4-4 4M3 7h18M7 21l-4-4 4-4m14 4H3" />
-            </svg>
-          </span>
+          <BrandSymbol />
           <span className="brand-name">Employee Sync</span>
         </Link>
       </div>

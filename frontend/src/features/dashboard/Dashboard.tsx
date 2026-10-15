@@ -5,6 +5,7 @@ import type { Page, SyncJob, Task } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { StatusBadge } from '../../components/StatusBadge';
 import { SortableHeader } from '../../components/SortableHeader';
+import { Skeleton, SkeletonRegion, SkeletonTableRows, SkeletonTimeline } from '../../components/Skeleton';
 import { errorName } from '../integrations/errorMessages';
 import { useDemoSettings } from '../demo/DemoContext';
 
@@ -19,6 +20,7 @@ export function Dashboard() {
   const [failedTasks, setFailedTasks] = useState<Page<Task> | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { scenario, simulation, scenarioUnavailable, simulationUnavailable } = useDemoSettings();
@@ -43,7 +45,7 @@ export function Dashboard() {
       if (currentSort.sortBy !== 'startedAt' || currentSort.sortDirection !== 'DESC') await loadJobs(currentSort.sortBy, currentSort.sortDirection);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '동기화 현황을 읽지 못했습니다.');
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setHasLoaded(true); }
   }, [csrfRejected, expireSession, loadJobs]);
 
   useEffect(() => { void loadDashboard(); }, [loadDashboard]);
@@ -78,6 +80,13 @@ export function Dashboard() {
         {busy ? '동기화 요청 중…' : '동기화 실행'}
       </button>
     </div>
+    {loading && !hasLoaded && !error ? <SkeletonRegion label="대시보드 정보를 불러오는 중" className="dashboard-loading-skeleton">
+      <Skeleton width="28%" height={15} />
+      <div className="dashboard-demo-section"><Skeleton width="31%" /><div className="dashboard-skeleton-three">{Array.from({ length: 3 }, (_, i) => <div key={i}><Skeleton width="45%" height={10} /><Skeleton width={i === 1 ? '70%' : '54%'} /></div>)}</div></div>
+      <div className="dashboard-workflow dashboard-skeleton-workflow"><Skeleton width="22%" height={15} /><div>{Array.from({ length: 4 }, (_, i) => <div key={i}><Skeleton width="32px" /><Skeleton width="66%" /><Skeleton width="82%" height={10} /></div>)}</div></div>
+      <section className="summary-section"><Skeleton width="19%" height={15} /><div className="summary-strip">{Array.from({ length: 4 }, (_, i) => <div className="summary-item" key={i}><Skeleton width={i === 0 ? '50%' : '34%'} height={22} /><Skeleton width="48%" height={10} /></div>)}</div></section>
+      <div className="dashboard-operations dashboard-skeleton-operations"><section className="dashboard-section"><div className="section-title"><Skeleton width="35%" height={18} /><Skeleton width={70} height={28} /></div><div className="table-wrap"><table><thead><tr>{Array.from({ length: 8 }, (_, i) => <th key={i}><Skeleton width="65%" /></th>)}</tr></thead><tbody><SkeletonTableRows rows={5} columns={8} /></tbody></table></div></section><section className="dashboard-section"><div className="section-title"><Skeleton width="70%" height={18} /></div><SkeletonTimeline events={3} /></section></div>
+    </SkeletonRegion> : <>
     <div className="latest-sync-line" aria-live="polite"><span>최근 동기화</span>{latest
       ? <span className="latest-sync-detail"><span className="mono">#{latest.syncJobId}</span><time>{date(latest.startedAt)}</time><StatusBadge value={latest.status} /></span>
       : <span className="muted">아직 실행한 동기화가 없습니다.</span>}
@@ -118,7 +127,7 @@ export function Dashboard() {
         <div className="section-title"><div><p className="eyebrow">처리 내역</p><h2>최근 동기화 작업</h2></div>
           <button className="secondary compact-button" onClick={() => void loadDashboard()} disabled={loading}>{loading ? '확인 중…' : '새로고침'}</button>
         </div>
-        <div className="table-frame">{loading ? <div className="loading-inline">동기화 작업을 불러오는 중</div> : !jobs.length ? <p className="table-empty">표시할 동기화 작업이 없습니다.</p> : <div className="table-wrap"><table>
+        <div className="table-frame">{!jobs.length ? <p className="table-empty">표시할 동기화 작업이 없습니다.</p> : <div className="table-wrap"><table>
           <thead><tr><SortableHeader label="작업 번호" sortKey="id" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="상태" sortKey="status" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="대상 직원" sortKey="totalCount" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="신규" sortKey="insertedCount" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="수정" sortKey="updatedCount" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="변경 없음" sortKey="skippedCount" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="실패" sortKey="failedCount" activeSort={sort} onSort={(key) => void toggleSort(key)} /><SortableHeader label="시작 시각" sortKey="startedAt" activeSort={sort} onSort={(key) => void toggleSort(key)} /></tr></thead>
           <tbody>{jobs.map((job) => <tr key={job.syncJobId}>
             <td className="mono">#{job.syncJobId}</td><td><StatusBadge value={job.status} /></td><td>{job.totalCount}</td>
@@ -137,9 +146,10 @@ export function Dashboard() {
             <p className="attention-action">{actionName(task.action)} · {errorName(task.lastErrorCode) ?? '실패 원인 확인 필요'}</p>
             <div className="attention-item-bottom"><time>{date(task.updatedAt)}</time><Link className="text-link" to={`/integrations/${task.id}`}>상세 보기</Link></div>
           </li>
-        ))}</ul> : failedTasks ? <p className="table-empty small-empty">실패한 외부 연계가 없습니다.</p> : <div className="loading-inline">외부 연계 현황을 불러오는 중…</div>}
+        ))}</ul> : <p className="table-empty small-empty">실패한 외부 연계가 없습니다.</p>}
       </section>
     </div>
+    </>}
   </div>;
 }
 

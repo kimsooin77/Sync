@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Route, Routes } from 'react-router-dom';
 import { IntegrationDetailPage } from './IntegrationDetailPage';
-import { jsonResponse, providers, stubFetch } from '../../test/helpers';
+import { deferred, emptyPage, jsonResponse, providers, stubFetch } from '../../test/helpers';
 
 function detail(status: string) {
   return { id: 21, employeeNo: 'E1021', action: 'UPDATE_ACCOUNT', status, retryCount: 1, maxRetryCount: 3,
@@ -16,6 +16,37 @@ function renderDetail() {
 }
 
 describe('integration task detail', () => {
+  it('shows the task detail skeleton only until the first response and keeps content while retry is pending', async () => {
+    const taskRequest = deferred<Response>();
+    const attemptsRequest = deferred<Response>();
+    const retryRequest = deferred<Response>();
+    let retryPending = false;
+    let attemptCalls = 0;
+    stubFetch((url, init) => {
+      if (url === '/api/auth/me') return jsonResponse({ username: 'admin' });
+      if (url === '/api/auth/csrf') return jsonResponse({ headerName: 'X-CSRF-TOKEN', token: 'csrf' });
+      if (url === '/api/integration-tasks/21' && !retryPending) return taskRequest.promise;
+      if (url === '/api/integration-tasks/21' && retryPending) return jsonResponse(detail('RETRY_WAIT'));
+      if (url.startsWith('/api/integration-tasks/21/attempts')) return attemptCalls++ === 0 ? attemptsRequest.promise : jsonResponse(emptyPage);
+      if (url === '/api/integration-tasks/21/retry') { retryPending = true; return retryRequest.promise; }
+      throw new Error(`Unexpected ${init.method} ${url}`);
+    });
+    renderDetail();
+    expect(await screen.findByRole('status')).toHaveTextContent('외부 연계 작업 정보를 불러오는 중');
+    expect(document.querySelectorAll('.skeleton-timeline-event')).toHaveLength(3);
+    await act(async () => { taskRequest.resolve(jsonResponse(detail('FAILED'))); attemptsRequest.resolve(jsonResponse(emptyPage)); });
+    expect(await screen.findByRole('button', { name: '수동 재처리' })).toBeEnabled();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '수동 재처리' }));
+    expect(await screen.findByRole('button', { name: '요청 중…' })).toBeDisabled();
+    expect(screen.getByRole('heading', { name: '처리 결과' })).toBeInTheDocument();
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+    await act(async () => retryRequest.resolve(jsonResponse({ id: 21, status: 'RETRY_WAIT', retryCount: 1 })));
+    expect(await screen.findAllByText('재시도 대기')).toHaveLength(2);
+    expect(document.querySelector('.skeleton-region')).not.toBeInTheDocument();
+  });
+
   it('keeps task summary stable across attempt pages and supports manual refresh and retry', async () => {
     const calls: { url: string; method: string }[] = [];
     let currentStatus = 'FAILED';
