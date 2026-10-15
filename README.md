@@ -2,8 +2,6 @@
 
 HR 직원 스냅샷을 내부 직원 데이터와 동기화하고, 입사·정보 변경·퇴사에 따른 그룹웨어 계정 작업과 외부 연계 실패 이력을 관리합니다.
 
-[![CI](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kimsooin77/Sync/actions/workflows/ci.yml?query=branch%3Amain) · [운영 데모](https://d2cpqpf162fsls.cloudfront.net)
-
 ## 프로젝트 개요
 
 직원 정보 변경을 먼저 내부 데이터베이스에 저장하고, 그룹웨어 반영은 별도 작업으로 처리합니다. 한 직원의 외부 연계가 실패해도 다른 직원의 동기화는 계속되며, 실패 내역을 확인하고 다시 처리할 수 있습니다.
